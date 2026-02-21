@@ -1,0 +1,50 @@
+# .github/workflows/pr_tf_validate.yml
+name: "Terraform Validate"
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_CLI_ARGS: "-no-color"
+
+jobs:
+  validate:
+    name: "Terraform Validate"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Validate infra
+        run: |
+          terraform -chdir=infra/gcp init -backend=false
+          terraform -chdir=infra/gcp validate -no-color
+
+      - name: Validate compute
+        run: |
+          terraform -chdir=compute/gcp init -backend=false
+          terraform -chdir=compute/gcp validate -no-color
+
+      - name: Validate bigip-base
+        run: |
+          terraform -chdir=f5/bigip-base/gcp init -backend=false
+          terraform -chdir=f5/bigip-base/gcp validate -no-color
+
+      - name: Validate bigip-config
+        run: |
+          terraform -chdir=f5/bigip-config/gcp init -backend=false
+          terraform -chdir=f5/bigip-config/gcp validate -no-color
+
+      - name: Validate xc
+        run: |
+          terraform -chdir=f5/xc init -backend=false
+          terraform -chdir=f5/xc validate -no-color

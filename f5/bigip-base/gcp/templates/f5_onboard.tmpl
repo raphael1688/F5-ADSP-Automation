@@ -1,0 +1,564 @@
+#!/bin/bash
+# Setup console and startup-script logging
+LOG_FILE=/var/log/cloud/startup-script.log
+mkdir -p  /var/log/cloud
+[[ -f $LOG_FILE ]] || /usr/bin/touch $LOG_FILE
+npipe=/tmp/$$.tmp
+/usr/bin/trap "rm -f $npipe" EXIT
+/usr/bin/mknod $npipe p
+/usr/bin/tee <$npipe -a $LOG_FILE /dev/ttyS0 &
+exec 1>&-
+exec 1>$npipe
+exec 2>&1
+
+# Run Immediately Before MCPD starts
+/usr/bin/setdb provision.extramb 1024
+/usr/bin/setdb restjavad.useextramb true
+
+# skip startup script if already complete
+if [[ -f /config/startup_finished ]]; then
+  echo "Onboarding complete, skip startup script"
+  exit
+fi
+
+mkdir -p /config/cloud /var/config/rest/downloads /var/lib/cloud/icontrollx_installs
+
+# Create runtime configuration on first boot
+if [[ ! -f /config/nicswap_finished ]]; then
+cat << 'EOF' > /config/cloud/runtime-init-conf.yaml
+---
+controls:
+  extensionInstallDelayInMs: 60000
+runtime_parameters:
+  - name: USER_NAME
+    type: static
+    value: ${bigip_username}
+  - name: SSH_KEYS
+    type: static
+    value: "${ssh_keypair}"
+  - name: HOST_NAME
+    type: metadata
+    metadataProvider:
+        environment: gcp
+        type: compute
+        field: name
+EOF
+
+if [[ "${gcp_secret_manager_authentication}" == "true" ]]; then
+  cat << 'EOF' >> /config/cloud/runtime-init-conf.yaml
+  - name: ADMIN_PASS
+    type: secret
+    secretProvider:
+      environment: gcp
+      type: SecretsManager
+      version: latest
+      secretId: ${bigip_password}
+EOF
+else
+  cat << 'EOF' >> /config/cloud/runtime-init-conf.yaml
+  - name: ADMIN_PASS
+    type: static
+    value: ${bigip_password}
+EOF
+fi
+
+cat << 'EOF' >> /config/cloud/runtime-init-conf.yaml
+  - name: AS3_GCS_URI
+    type: static
+    value: ${AS3_GCS_URI}
+EOF
+
+
+# Keep pre_onboard_enabled outside the conditional so runtime_parameters stays "open"
+cat << 'EOF' >> /config/cloud/runtime-init-conf.yaml
+pre_onboard_enabled: []
+EOF
+
+
+cat /config/cloud/runtime-init-conf.yaml > /config/cloud/runtime-init-conf-backup.yaml
+
+cat << 'EOF' >> /config/cloud/runtime-init-conf.yaml
+extension_packages:
+  install_operations:
+    - extensionType: do
+      extensionVersion: ${DO_VER}
+      extensionUrl: ${DO_URL}
+    - extensionType: as3
+      extensionVersion: ${AS3_VER}
+      extensionUrl: ${AS3_URL}
+    - extensionType: ts
+      extensionVersion: ${TS_VER}
+      extensionUrl: ${TS_URL}
+%{ if CFE_URL != "" ~}
+    - extensionType: cf
+      extensionVersion: ${CFE_VER}
+      extensionUrl: ${CFE_URL}
+%{ endif ~}
+    - extensionType: fast
+      extensionVersion: ${FAST_VER}
+      extensionUrl: ${FAST_URL}
+extension_services:
+  service_operations:
+    - extensionType: do
+      type: inline
+      value:
+        schemaVersion: 1.0.0
+        class: Device
+        async: true
+        Common:
+          class: Tenant
+          hostname: '{{{HOST_NAME}}}.com'
+          myNtp:
+            class: NTP
+            servers:
+              - 169.254.169.254
+            timezone: UTC
+          myDns:
+            class: DNS
+            nameServers:
+              - 169.254.169.254
+          myProvisioning:
+            class: Provision
+            ltm: nominal
+            asm: ${asm}
+            apm: ${apm}
+          admin:
+            class: User
+            partitionAccess:
+              all-partitions:
+                role: admin
+            password: '{{{ADMIN_PASS}}}'
+            shell: bash
+            keys:
+              - '{{{SSH_KEYS}}}'
+            userType: regular
+          '{{{USER_NAME}}}':
+            class: User
+            partitionAccess:
+              all-partitions:
+                role: admin
+            password: '{{{ADMIN_PASS}}}'
+            shell: bash
+            keys:
+              - '{{{SSH_KEYS}}}'
+            userType: regular
+%{ if AS3_GCS_URI != "" ~}
+post_onboard_enabled:
+  - name: pull_and_apply_as3_from_gcs
+    type: inline
+    commands:
+      - |
+        #!/bin/bash
+        set -euo pipefail
+        LOG=/var/log/cloud/as3-pull-apply.log
+        mkdir -p /var/log/cloud
+        exec >>"$LOG" 2>&1
+
+        AS3_GCS_URI="{{{AS3_GCS_URI}}}"
+        AS3_BUCKET="$${AS3_BUCKET:-}"
+        AS3_OBJECT="$${AS3_OBJECT:-}"
+
+        ADMIN_USER="admin"
+        ADMIN_PASS="{{{ADMIN_PASS}}}"
+        BIGIP_MGMT_URL="https://localhost:8443"
+
+        SENTINEL="/config/as3_applied"
+        DECL="/var/tmp/as3-declaration.json"
+        RESP="/var/tmp/as3-declare-response.json"
+
+        MAX_RETRIES=180
+        RETRY_DELAY=5
+
+        log() { echo "[$(date -Iseconds)] $*"; }
+
+        if [[ -f "$SENTINEL" ]]; then
+          log "Sentinel exists ($SENTINEL). Skipping."
+          exit 0
+        fi
+
+        # Parse gs://bucket/object if provided
+        if [[ -n "$AS3_GCS_URI" && "$AS3_GCS_URI" == gs://* ]]; then
+          AS3_BUCKET="$${AS3_GCS_URI#gs://}"
+          AS3_BUCKET="$${AS3_BUCKET%%/*}"
+          AS3_OBJECT="$${AS3_GCS_URI#gs://$${AS3_BUCKET}/}"
+        fi
+
+        if [[ -z "$AS3_BUCKET" || -z "$AS3_OBJECT" ]]; then
+          log "AS3 not configured (AS3_GCS_URI='$${AS3_GCS_URI:-}'), skipping."
+          exit 0
+        fi
+
+        # Minimal encoding for GCS JSON API: encode '/' as %2F
+        OBJ_ENC="$${AS3_OBJECT//\//%2F}"
+        GCS_URL="https://storage.googleapis.com/storage/v1/b/$${AS3_BUCKET}/o/$${OBJ_ENC}?alt=media"
+
+        log "Waiting for AS3 to be reachable on localhost..."
+        i=0
+        until curl -skf -u "$${ADMIN_USER}:$${ADMIN_PASS}" \
+          $${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/info >/dev/null 2>&1; do
+          i=$((i+1))
+          if [[ $i -ge $MAX_RETRIES ]]; then
+            log "ERROR: AS3 not ready after $${MAX_RETRIES} attempts."
+            exit 1
+          fi
+          sleep "$${RETRY_DELAY}"
+        done
+        log "AS3 reachable."
+
+        log "Fetching GCP access token from metadata server..."
+        TOKEN_JSON="$(curl -sf -H "Metadata-Flavor: Google" \
+          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")"
+
+        TOKEN="$(echo "$${TOKEN_JSON}" | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+        if [[ -z "$${TOKEN}" ]]; then
+          log "ERROR: Could not parse access_token from metadata response: $${TOKEN_JSON}"
+          exit 1
+        fi
+
+        log "Downloading AS3 declaration from GCS JSON API..."
+        curl -sfL \
+          -H "Authorization: Bearer $${TOKEN}" \
+          -o "$${DECL}" \
+          "$${GCS_URL}"
+
+        test -s "$${DECL}" || { log "ERROR: Declaration missing/empty at $${DECL}"; exit 1; }
+        log "Downloaded declaration to $${DECL} (bytes: $(wc -c < "$${DECL}"))."
+
+        log "POSTing AS3 declaration..."
+        HTTP_CODE="$(curl -sk -u "$${ADMIN_USER}:$${ADMIN_PASS}" \
+          -H "Content-Type: application/json" \
+          -X POST $${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/declare \
+          --data-binary "@$${DECL}" \
+          -o "$${RESP}" \
+          -w "%%{http_code}")"
+
+        log "AS3 POST returned HTTP $${HTTP_CODE}"
+        log "Response (first 2000 bytes):"
+        head -c 2000 "$${RESP}" || true
+        echo
+
+        if [[ "$${HTTP_CODE}" =~ ^4|^5 ]]; then
+          log "ERROR: AS3 declare failed immediately."
+          exit 1
+        fi
+
+        if [[ "$${HTTP_CODE}" == "202" ]]; then
+          TASK_ID="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$${RESP}" | head -n1)"
+          if [[ -z "$${TASK_ID}" ]]; then
+            log "ERROR: HTTP 202 but no task id in response."
+            exit 1
+          fi
+
+          log "Polling AS3 task $${TASK_ID}..."
+          j=0
+          while true; do
+            j=$((j+1))
+            TASK_JSON="$(curl -sk -u "$${ADMIN_USER}:$${ADMIN_PASS}" \
+              "$${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/task/$${TASK_ID}" || true)"
+
+            if echo "$${TASK_JSON}" | grep -qiE '"fail"|"error"|"exception"'; then
+              log "ERROR: Task indicates failure. Body (first 4000 bytes):"
+              echo "$${TASK_JSON}" | head -c 4000
+              echo
+              exit 1
+            fi
+
+            if echo "$${TASK_JSON}" | grep -qiE '"done"|"complete"|"success"'; then
+              log "Task indicates completion."
+              break
+            fi
+
+            if [[ $j -ge $${MAX_RETRIES} ]]; then
+              log "ERROR: Timed out waiting for task $${TASK_ID}."
+              exit 1
+            fi
+            sleep "$${RETRY_DELAY}"
+          done
+        fi
+
+        log "Final health check..."
+        curl -skf -u "$${ADMIN_USER}:$${ADMIN_PASS}" $${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/info >/dev/null
+
+        touch "$${SENTINEL}"
+        log "AS3 applied and sentinel written."
+%{ else ~}
+post_onboard_enabled: []
+%{ endif ~}
+EOF
+
+cat << 'EOF' >> /config/cloud/runtime-init-conf-backup.yaml
+extension_services:
+  service_operations:
+    - extensionType: do
+      type: inline
+      value:
+        schemaVersion: 1.0.0
+        class: Device
+        async: true
+        Common:
+          class: Tenant
+          hostname: '{{{HOST_NAME}}}.com'
+          myNtp:
+            class: NTP
+            servers:
+              - 169.254.169.254
+            timezone: UTC
+          myDns:
+            class: DNS
+            nameServers:
+              - 169.254.169.254
+          myProvisioning:
+            class: Provision
+            ltm: nominal
+            asm: ${asm}
+            apm: ${apm}
+          admin:
+            class: User
+            partitionAccess:
+              all-partitions:
+                role: admin
+            password: '{{{ADMIN_PASS}}}'
+            shell: bash
+            keys:
+              - '{{{SSH_KEYS}}}'
+            userType: regular
+          '{{{USER_NAME}}}':
+            class: User
+            partitionAccess:
+              all-partitions:
+                role: admin
+            password: '{{{ADMIN_PASS}}}'
+            shell: bash
+            keys:
+              - '{{{SSH_KEYS}}}'
+            userType: regular
+%{ if AS3_GCS_URI != "" ~}
+post_onboard_enabled:
+  - name: pull_and_apply_as3_from_gcs
+    type: inline
+    commands:
+      - |
+        #!/bin/bash
+        set -euo pipefail
+        LOG=/var/log/cloud/as3-pull-apply.log
+        mkdir -p /var/log/cloud
+        exec >>"$LOG" 2>&1
+
+        AS3_GCS_URI="{{{AS3_GCS_URI}}}"
+        AS3_BUCKET="$${AS3_BUCKET:-}"
+        AS3_OBJECT="$${AS3_OBJECT:-}"
+
+        ADMIN_USER="admin"
+        ADMIN_PASS="{{{ADMIN_PASS}}}"
+        BIGIP_MGMT_URL="https://localhost:8443"
+
+        SENTINEL="/config/as3_applied"
+        DECL="/var/tmp/as3-declaration.json"
+        RESP="/var/tmp/as3-declare-response.json"
+
+        MAX_RETRIES=180
+        RETRY_DELAY=5
+
+        log() { echo "[$(date -Iseconds)] $*"; }
+
+        if [[ -f "$SENTINEL" ]]; then
+          log "Sentinel exists ($SENTINEL). Skipping."
+          exit 0
+        fi
+
+        # Parse gs://bucket/object if provided
+        if [[ -n "$AS3_GCS_URI" && "$AS3_GCS_URI" == gs://* ]]; then
+          AS3_BUCKET="$${AS3_GCS_URI#gs://}"
+          AS3_BUCKET="$${AS3_BUCKET%%/*}"
+          AS3_OBJECT="$${AS3_GCS_URI#gs://$${AS3_BUCKET}/}"
+        fi
+
+        if [[ -z "$AS3_BUCKET" || -z "$AS3_OBJECT" ]]; then
+          log "AS3 not configured (AS3_GCS_URI='$${AS3_GCS_URI:-}'), skipping."
+          exit 0
+        fi
+
+        # Minimal encoding for GCS JSON API: encode '/' as %2F
+        OBJ_ENC="$${AS3_OBJECT//\//%2F}"
+        GCS_URL="https://storage.googleapis.com/storage/v1/b/$${AS3_BUCKET}/o/$${OBJ_ENC}?alt=media"
+
+        log "Waiting for AS3 to be reachable on localhost..."
+        i=0
+        until curl -skf -u "$${ADMIN_USER}:$${ADMIN_PASS}" \
+          $${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/info >/dev/null 2>&1; do
+          i=$((i+1))
+          if [[ $i -ge $MAX_RETRIES ]]; then
+            log "ERROR: AS3 not ready after $${MAX_RETRIES} attempts."
+            exit 1
+          fi
+          sleep "$${RETRY_DELAY}"
+        done
+        log "AS3 reachable."
+
+        log "Fetching GCP access token from metadata server..."
+        TOKEN_JSON="$(curl -sf -H "Metadata-Flavor: Google" \
+          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")"
+
+        TOKEN="$(echo "$${TOKEN_JSON}" | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+        if [[ -z "$${TOKEN}" ]]; then
+          log "ERROR: Could not parse access_token from metadata response: $${TOKEN_JSON}"
+          exit 1
+        fi
+
+        log "Downloading AS3 declaration from GCS JSON API..."
+        curl -sfL \
+          -H "Authorization: Bearer $${TOKEN}" \
+          -o "$${DECL}" \
+          "$${GCS_URL}"
+
+        test -s "$${DECL}" || { log "ERROR: Declaration missing/empty at $${DECL}"; exit 1; }
+        log "Downloaded declaration to $${DECL} (bytes: $(wc -c < "$${DECL}"))."
+
+        log "POSTing AS3 declaration..."
+        HTTP_CODE="$(curl -sk -u "$${ADMIN_USER}:$${ADMIN_PASS}" \
+          -H "Content-Type: application/json" \
+          -X POST $${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/declare \
+          --data-binary "@$${DECL}" \
+          -o "$${RESP}" \
+          -w "%%{http_code}")"
+
+        log "AS3 POST returned HTTP $${HTTP_CODE}"
+        log "Response (first 2000 bytes):"
+        head -c 2000 "$${RESP}" || true
+        echo
+
+        if [[ "$${HTTP_CODE}" =~ ^4|^5 ]]; then
+          log "ERROR: AS3 declare failed immediately."
+          exit 1
+        fi
+
+        if [[ "$${HTTP_CODE}" == "202" ]]; then
+          TASK_ID="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$${RESP}" | head -n1)"
+          if [[ -z "$${TASK_ID}" ]]; then
+            log "ERROR: HTTP 202 but no task id in response."
+            exit 1
+          fi
+
+          log "Polling AS3 task $${TASK_ID}..."
+          j=0
+          while true; do
+            j=$((j+1))
+            TASK_JSON="$(curl -sk -u "$${ADMIN_USER}:$${ADMIN_PASS}" \
+              "$${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/task/$${TASK_ID}" || true)"
+
+            if echo "$${TASK_JSON}" | grep -qiE '"fail"|"error"|"exception"'; then
+              log "ERROR: Task indicates failure. Body (first 4000 bytes):"
+              echo "$${TASK_JSON}" | head -c 4000
+              echo
+              exit 1
+            fi
+
+            if echo "$${TASK_JSON}" | grep -qiE '"done"|"complete"|"success"'; then
+              log "Task indicates completion."
+              break
+            fi
+
+            if [[ $j -ge $${MAX_RETRIES} ]]; then
+              log "ERROR: Timed out waiting for task $${TASK_ID}."
+              exit 1
+            fi
+            sleep "$${RETRY_DELAY}"
+          done
+        fi
+
+        log "Final health check..."
+        curl -skf -u "$${ADMIN_USER}:$${ADMIN_PASS}" $${BIGIP_MGMT_URL}/mgmt/shared/appsvcs/info >/dev/null
+
+        touch "$${SENTINEL}"
+        log "AS3 applied and sentinel written."
+%{ else ~}
+post_onboard_enabled: []
+%{ endif ~}
+EOF
+fi
+
+# Create nic_swap script when multi nic on first boot
+COMPUTE_BASE_URL="http://metadata.google.internal/computeMetadata/v1"
+
+if [[ "${NIC_COUNT}" == "true" && ! -f /config/nicswap_finished ]]; then
+   cat << 'EOF' >> /config/cloud/nic_swap.sh
+   #!/bin/bash
+   source /usr/lib/bigstart/bigip-ready-functions
+   wait_bigip_ready
+   echo "before nic swapping"
+   tmsh list sys db provision.1nicautoconfig
+   tmsh list sys db provision.managementeth
+   echo "after nic swapping"
+   bigstart stop tmm
+   tmsh modify sys db provision.managementeth value eth1
+   tmsh modify sys db provision.1nicautoconfig value disable
+   bigstart start tmm
+   wait_bigip_ready
+   echo "---Mgmt interface setting---"
+   tmsh list sys db provision.managementeth
+   tmsh list sys db provision.1nicautoconfig
+   sed -i "s/iface0=eth0/iface0=eth1/g" /etc/ts/common/image.cfg
+   echo "Done changing interface"
+   echo "Set TMM networks"
+   MGMTADDRESS=$(curl -s -f --retry 10 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/1/ip)
+   MGMTMASK=$(curl -s -f --retry 10 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/1/subnetmask)
+   MGMTGATEWAY=$(curl -s -f --retry 10 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/1/gateway)
+   MGMTMTU=$(curl -s -f --retry 10 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/1/mtu)
+   MGMTNETWORK=$(/bin/ipcalc -n $MGMTADDRESS $MGMTMASK | cut -d= -f2)
+   echo $MGMTADDRESS
+   echo $MGMTMASK
+   echo $MGMTGATEWAY
+   echo $MGMTMTU
+   echo $MGMTNETWORK   
+   tmsh modify sys global-settings gui-setup disabled
+   tmsh modify sys global-settings mgmt-dhcp disabled
+   tmsh delete sys management-route all 
+   tmsh delete sys management-ip all
+   tmsh create sys management-ip $${MGMTADDRESS}/32
+   tmsh create sys management-route mgmt_gw network $${MGMTGATEWAY}/32 type interface mtu $${MGMTMTU}
+   tmsh create sys management-route mgmt_net network $${MGMTNETWORK}/$${MGMTMASK} gateway $${MGMTGATEWAY} mtu $${MGMTMTU}
+   tmsh create sys management-route default gateway $${MGMTGATEWAY} mtu $${MGMTMTU}
+   tmsh modify sys global-settings remote-host add { metadata.google.internal { hostname metadata.google.internal addr 169.254.169.254 } }
+   tmsh modify sys management-dhcp sys-mgmt-dhcp-config request-options delete { ntp-servers }
+   echo "Setting DNS resolver to Cloud DNS"
+   tmsh modify sys dns name-servers add { 169.254.169.254 }
+   tmsh save /sys config
+   /usr/bin/touch /config/nicswap_finished
+   reboot
+EOF
+fi
+
+# Create run_runtime_init.sh script on first boot
+if [[ ! -f /config/nicswap_finished ]]; then
+  cat << 'EOF' >> /config/cloud/run_runtime_init.sh
+  #!/bin/bash
+  source /usr/lib/bigstart/bigip-ready-functions
+  wait_bigip_ready
+  for i in {1..30}; do
+    curl -fv --retry 1 --connect-timeout 5 -L ${INIT_URL} -o "/var/config/rest/downloads/f5-bigip-runtime-init.gz.run" && break || sleep 10
+  done
+  bash /var/config/rest/downloads/f5-bigip-runtime-init.gz.run -- '--cloud gcp' 2>&1
+  /usr/local/bin/f5-bigip-runtime-init --config-file /config/cloud/runtime-init-conf.yaml 2>&1
+  sleep 5
+  /usr/local/bin/f5-bigip-runtime-init --config-file /config/cloud/runtime-init-conf-backup.yaml 2>&1
+  sleep 5
+  /usr/local/bin/f5-bigip-runtime-init --config-file /config/cloud/runtime-init-conf-backup.yaml 2>&1
+  /usr/bin/touch /config/startup_finished
+EOF
+fi
+
+# Run scripts based on number of nics
+if [[ "${NIC_COUNT}" == "true" ]]; then
+  if [[ -f /config/nicswap_finished ]]; then
+    echo "Running run_runtime_init.sh"
+    chmod +x /config/cloud/run_runtime_init.sh
+    nohup /config/cloud/run_runtime_init.sh &
+  else
+    chmod +x /config/cloud/nic_swap.sh
+    nohup /config/cloud/nic_swap.sh &
+  fi
+else
+    echo "Running run_runtime_init.sh"
+    chmod +x /config/cloud/run_runtime_init.sh
+    nohup /config/cloud/run_runtime_init.sh &
+fi

@@ -1,53 +1,49 @@
-# Solutions Engineering Template Repository
+# F5 Application Delivery and Security Platform with CI/CD
 
-A template repository that contains all required files (LICENSE, SUPPORT, CONTRIBUTING, etc) as outlined in the org standards.  
+This repository demonstrates how the **F5 Application Delivery and Security Platform (ADSP)** from **F5, Inc.** can be deployed using a structured, production-aligned CI/CD workflow.
 
-The sections below are recommended in your project's README.md file.
+The project is intentionally designed to be:
 
-## Overview
+- **Forkable**
+- **Cloud-native**
+- **Modular**
+- **Real-world aligned**
+- **Automation-first**
 
-Provide a short overview of the project.
+This is not a click-through lab.  
+This repository shows how ADSP components can be provisioned and composed using Terraform and GitHub Actions in a repeatable deployment pipeline.
 
-## Getting Started
+## Quick Start
 
-Provide a quick example of how to use your code.  This should provide the user with a launch point to quickly see what the project can offer them.
+1. **Read the deployment guide:** [Deploy Use-Case 1 in Google Cloud](docs/ADSP-UC1-GCP.md)
+2. **Configure settings:**
+   - `config/common/gcp/env.json` - GCP project, region, prefix
+   - `config/uc1/gcp/env.json` - Use-case specific settings
+   - `config/uc1/xc/env.json` - F5 Distributed Cloud config
+3. **Set GitHub Secrets** (see deployment guide)
+4. **Push to `deploy-adsp-uc1` branch** to deploy
 
-## Installation
+## Architecture
 
-Outline the requirements and steps to install this project.
+- **Infra:** VPC with segmented subnets (management, external, internal, application)
+- **Compute:** Vulnerable applications (OWASP Juice Shop, crAPI)
+- **F5 BIG-IP:** Application Delivery Controller with AWAF (single-NIC)
+- **F5 Distributed Cloud:** Cloud-native application security and delivery
 
-## Usage
+## Deployment Branches
 
-Outline how the user can use your project and the various features the project offers.
+- `deploy-adsp-uc1` - Validate, plan, and apply infrastructure
+- `test-adsp-uc1` - Validate only (no apply)
+- `destroy-adsp-uc1` - Destroy all resources
 
-## Development
+## Documentation
 
-Outline any requirements to setup a development environment if someone would like to contribute.  You may also link to another file for this information.
+- [Deploy Use-Case 1 in Google Cloud](docs/ADSP-UC1-GCP.md) - Complete deployment guide
 
-## Support
+## Requirements
 
-For support, please open a GitHub issue.  Note, the code in this repository is community supported and is not supported by F5 Networks.  For a complete list of supported projects please reference [SUPPORT.md](SUPPORT.md).
+- GCP Project with Workload Identity Federation
+- F5 Distributed Cloud tenant with API certificate
+- GitHub Actions enabled
 
-## Community Code of Conduct
-
-Please refer to the [F5 DevCentral Community Code of Conduct](code_of_conduct.md).
-
-## License
-
-[Apache License 2.0](LICENSE)
-
-## Copyright
-
-Copyright 2014-2020 F5 Networks Inc.
-
-### F5 Networks Contributor License Agreement
-
-Before you start contributing to any project sponsored by F5 Networks, Inc. (F5) on GitHub, you will need to sign a Contributor License Agreement (CLA).
-
-If you are signing as an individual, we recommend that you talk to your employer (if applicable) before signing the CLA since some employment agreements may have restrictions on your contributions to other projects.
-Otherwise by submitting a CLA you represent that you are legally entitled to grant the licenses recited therein.
-
-If your employer has rights to intellectual property that you create, such as your contributions, you represent that you have received permission to make contributions on behalf of that employer, that your employer has waived such rights for your contributions, or that your employer has executed a separate CLA with F5.
-
-If you are signing on behalf of a company, you represent that you are legally entitled to grant the license recited therein.
-You represent further that each employee of the entity that submits contributions is authorized to submit such contributions on behalf of the entity pursuant to the CLA.
+For detailed prerequisites, configuration, and troubleshooting, see the [deployment guide](docs/ADSP-UC1-GCP.md).

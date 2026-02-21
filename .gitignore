@@ -1,0 +1,23 @@
+# .gitignore (drop-in recommendations for your demo repo)
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/crash.log
+**/*.tfplan
+
+# Generated credentials / temp files (workflows)
+**/api.p12
+**/gha-creds-*.json
+*.p12
+*.pem
+*.key
+api.p12
+api-cert.pem
+api-key.pem
+f5/bigip-base/gcp/generated/
+
+*.back
+.idea
