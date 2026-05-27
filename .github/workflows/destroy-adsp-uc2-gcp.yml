@@ -1,0 +1,226 @@
+name: "Destroy GCP ADSP Use-Case 2"
+
+on:
+  push:
+    branches:
+      - destroy-adsp-uc2
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_CLI_ARGS: "-no-color"
+
+jobs:
+
+  #--------------------------------------------------------------
+  # Precheck: verify state bucket exists before attempting destroy
+  #--------------------------------------------------------------
+  precheck_state_bucket:
+    name: "Precheck: State bucket exists?"
+    runs-on: ubuntu-latest
+    outputs:
+      bucket_exists: ${{ steps.check.outputs.bucket_exists }}
+      tf_state_bucket: ${{ steps.env.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load common config + derive bucket
+        id: env
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON_JSON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          PROJECT_PREFIX="$(jq -r .project_prefix "$COMMON_JSON")"
+          TF_STATE_BUCKET="${PROJECT_PREFIX}-state-bucket"
+          echo "tf_state_bucket=${TF_STATE_BUCKET}" >> "$GITHUB_OUTPUT"
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Check bucket exists
+        id: check
+        run: |
+          set -euo pipefail
+          TF_STATE_BUCKET="${{ steps.env.outputs.tf_state_bucket }}"
+          if gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" >/dev/null 2>&1; then
+            echo "bucket_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bucket_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  #--------------------------------------------------------------
+  # Destroy order: GKE → Infra → Bucket
+  #--------------------------------------------------------------
+  terraform_k8s_destroy:
+    name: "Destroy: GKE"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: precheck_state_bucket
+    defaults:
+      run:
+        working-directory: ./k8s/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write /tmp/k8s.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc2/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+            gcp_zone,
+
+            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc2/infra",
+
+            admin_src_addr,
+
+            release_channel:                  (.k8s.release_channel // "REGULAR"),
+            node_machine_type:                (.k8s.node_machine_type // "e2-standard-4"),
+            node_count:                       (.k8s.node_count // 2),
+            node_disk_size_gb:                (.k8s.node_disk_size_gb // 50),
+            node_disk_type:                   (.k8s.node_disk_type // "pd-balanced"),
+            master_ipv4_cidr_block:           (.k8s.master_ipv4_cidr_block // "172.16.0.0/28"),
+            master_authorized_networks_extra: (.k8s.master_authorized_networks_extra // [])
+          }' "$COMMON" "$UC_GCP" > /tmp/k8s.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc2/k8s"
+
+      - name: Terraform Plan (destroy)
+        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/k8s.tfvars.json
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -input=false -var-file=/tmp/k8s.tfvars.json
+
+  terraform_infra_destroy:
+    name: "Destroy: Infra"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: [precheck_state_bucket, terraform_k8s_destroy]
+    defaults:
+      run:
+        working-directory: ./infra/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write /tmp/infra.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc2/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+            project_prefix,
+            resource_owner,
+            admin_src_addr,
+
+            nap:    ( .features.nap // false ),
+            nic:    ( .features.nic // false ),
+            bigip:  ( .features.bigip // false ),
+            "bigip_cis": ( .features.bigip_cis // false ),
+            gke:    ( .features.gke // false )
+          }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc2/infra"
+
+      - name: Terraform Plan (destroy)
+        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/infra.tfvars.json
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -input=false -var-file=/tmp/infra.tfvars.json
+
+  delete_state_bucket:
+    name: "Delete State Bucket"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: [precheck_state_bucket, terraform_infra_destroy]
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete state bucket (contents + bucket)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET="gs://${TF_STATE_BUCKET}"
+
+          if gcloud storage buckets describe "$BUCKET" >/dev/null 2>&1; then
+            echo "Deleting bucket + all contents: $BUCKET"
+            gcloud storage rm -r "$BUCKET" || true
+
+            if gcloud storage buckets describe "$BUCKET" >/dev/null 2>&1; then
+              echo "Bucket still exists after rm -r; deleting explicitly."
+              gcloud storage buckets delete "$BUCKET" || true
+            else
+              echo "Bucket already deleted."
+            fi
+          else
+            echo "Bucket not found (already deleted): $BUCKET"
+          fi
