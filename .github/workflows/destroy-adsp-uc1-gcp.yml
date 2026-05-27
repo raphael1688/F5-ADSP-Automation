@@ -92,8 +92,8 @@ jobs:
             gcp_region: .gcp_region,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/infra",
-            bigip_state_prefix: "state/bigip-base",
+            infra_state_prefix: "state/uc1/infra",
+            bigip_state_prefix: "state/uc1/bigip-base",
 
             xc_tenant: .xc_base.xc_tenant,
             api_url: .xc_base.api_url,
@@ -152,7 +152,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/xc"
+            -backend-config="prefix=state/uc1/xc"
 
       - name: Terraform Plan (destroy)
         run: terraform plan -destroy -no-color -input=false -var-file=/tmp/xc.tfvars.json
@@ -188,8 +188,8 @@ jobs:
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/infra",
-            bigip_config_state_prefix: "state/bigip-config",
+            infra_state_prefix: "state/uc1/infra",
+            bigip_config_state_prefix: "state/uc1/bigip-config",
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
@@ -243,7 +243,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/bigip-base"
+            -backend-config="prefix=state/uc1/bigip-base"
 
       - name: Terraform Plan (destroy)
         run: terraform plan -destroy -no-color -input=false -var-file=/tmp/bigip-base.tfvars.json
@@ -279,7 +279,7 @@ jobs:
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/infra",
+            infra_state_prefix: "state/uc1/infra",
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
@@ -308,7 +308,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/compute"
+            -backend-config="prefix=state/uc1/compute"
 
       - name: Terraform Plan (destroy)
         run: terraform plan -destroy -no-color -input=false -var-file=/tmp/compute.tfvars.json
@@ -366,7 +366,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/infra"
+            -backend-config="prefix=state/uc1/infra"
 
       - name: Terraform Plan (destroy)
         run: terraform plan -destroy -no-color -input=false -var-file=/tmp/infra.tfvars.json

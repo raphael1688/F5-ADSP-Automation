@@ -1,4 +1,3 @@
-# Outputs consumed by downstream stacks or pipeline steps
 output "as3_gcs_bucket" {
   value       = local.as3_gcs_bucket
   description = "GCS bucket where AS3 declaration is stored"

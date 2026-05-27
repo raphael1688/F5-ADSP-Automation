@@ -12,7 +12,6 @@ terraform {
     }
   }
 
-  # Backend configured via CLI args in GitHub Actions
-  # terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="prefix=state/bigip-base"
+  # Backend configured via -backend-config at init time.
   backend "gcs" {}
 }

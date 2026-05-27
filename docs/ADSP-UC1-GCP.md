@@ -187,12 +187,12 @@ Edit `config/common/gcp/env.json`:
 ```
 
 **Required Changes:**
-- `gcp_project_id` - Your GCP project ID
+- `gcp_project_id` - GCP project ID
 - `gcp_region` - Target GCP region
-- `gcp_zone` - Target GCP zone (must be in specified region)
-- `project_prefix` - Unique prefix for resource naming (lowercase, no special chars)
-- `resource_owner` - Your initials or identifier for resource tagging
-- `admin_src_addr` - Your public IP address for management access (array format)
+- `gcp_zone` - Target GCP zone (must be inside `gcp_region`)
+- `project_prefix` - Unique prefix for resource naming (lowercase, alphanumeric)
+- `resource_owner` - Initials or identifier used for resource labels
+- `admin_src_addr` - Public IP CIDRs allowed to reach management interfaces (array of CIDRs)
 
 **Leave as-is:**
 - `tf_state_bucket` - Auto-generated as `${project_prefix}-state-bucket`
@@ -264,16 +264,16 @@ Edit `config/uc1/xc/env.json`:
 ```
 
 **Required Changes:**
-- `xc_tenant` - Your XC tenant name
-- `api_url` - Your XC API URL
-- `xc_namespace` - Desired namespace name
+- `xc_tenant` - XC tenant name
+- `api_url` - XC tenant API URL
+- `xc_namespace` - Namespace to create (cannot be `system` or `shared`)
 - `app_domain` - Public domain for application access
 
-**Important:**
-- `xc_namespace` - Terraform automatically creates this namespace; choose a unique name (cannot be "system" or "shared")
-- `backend_bigip: true` - Configures XC to use BIG-IP as origin (auto-discovered via remote state)
-- `origin_server: ""` - Leave empty; resolved automatically from BIG-IP public IP
-- Enable features under `xc_features` as needed for your demo
+**Notes:**
+- `xc_namespace` - Terraform creates this namespace; pick a name unique within the tenant.
+- `backend_bigip: true` - XC origin is auto-discovered from BIG-IP remote state.
+- `origin_server: ""` - Leave empty; resolved from BIG-IP public IP.
+- Toggle entries under `xc_features` per the demo being staged.
 
 ---
 
@@ -393,7 +393,6 @@ Destroy sequence:
 Activate Cloud Shell in GCP Console, then:
 
 ```bash
-# Set variables from your config
 PROJECT_PREFIX="your-prefix"
 STATE_BUCKET="${PROJECT_PREFIX}-state-bucket"
 
@@ -616,59 +615,17 @@ curl http://CRAPI_INTERNAL_IP:8888
 
 ---
 
-## Best Practices for Forkers
+## Operations
 
-### Security
+Restrict `admin_src_addr` in `config/common/gcp/env.json` to known IP ranges, and apply branch protection to `deploy-adsp-uc1` and `destroy-adsp-uc1` before using this in any environment that matters.
 
-- **Never commit secrets** to the repository
-- **Use GitHub Secrets** for all sensitive values (passwords, certificates, API keys)
-- **Rotate credentials regularly** (XC certificates, service account keys)
-- **Restrict `admin_src_addr`** to known IP addresses only
-- **Enable branch protection** on `deploy-*` and `destroy-*` branches
-- **Review firewall rules** before deployment in production environments
+State files should not be edited by hand. Back up state before major changes:
 
-### Configuration Management
+```bash
+gsutil -m cp -r gs://${STATE_BUCKET}/state gs://backup-bucket/state-$(date +%Y%m%d)
+```
 
-- **Keep `env.json` files non-secret** - they should contain no credentials
-- **Use meaningful `project_prefix`** values to avoid naming collisions
-- **Tag resources** using `resource_owner` for cost tracking
-- **Version control all changes** to configuration files
-- **Test changes** on `test-adsp-uc1` branch before deploying
-
-### State Management
-
-- **Do not edit state files manually**
-- **Enable versioning** on state bucket (auto-enabled by workflow)
-- **Back up state** before major changes:
-  ```bash
-  gsutil -m cp -r gs://${STATE_BUCKET}/state gs://backup-bucket/state-$(date +%Y%m%d)
-  ```
-- **Clean up old state** after successful destroys
-
-### Cost Optimization
-
-- **Destroy environments when not in use** (demo/test scenarios)
-- **Use minimal instance sizes** for non-production:
-  - Compute VMs: `e2-micro`
-  - BIG-IP: `n2-highmem-4` (minimum supported)
-- **Monitor costs** using GCP Billing Reports
-- **Set billing alerts** to avoid unexpected charges
-- **Avoid leaving infrastructure running overnight** for short-term demos
-
-### Workflow Management
-
-- **Use descriptive commit messages** when triggering deployments
-- **Monitor GitHub Actions logs** during deployment
-- **Review Terraform plans** before approving apply steps
-- **Document customizations** in repository README or wiki
-- **Test destroy workflow** in non-production before using in production
-
-### Naming Conventions
-
-- **project_prefix:** Lowercase, alphanumeric, max 10 characters
-- **resource_owner:** 2-4 character initials or identifier
-- **Branch names:** Follow existing pattern (`deploy-`, `test-`, `destroy-`)
-- **xc_namespace:** Unique name, cannot be "system" or "shared" (enforced by Terraform validation)
+Destroy environments when idle. BIG-IP PAYG dominates the hourly cost — see [Cost Estimates](#cost-estimates).
 
 ---
 

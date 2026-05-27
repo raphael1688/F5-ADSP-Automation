@@ -19,13 +19,13 @@ variable "tf_state_bucket" {
 variable "infra_state_prefix" {
   type        = string
   description = "GCS prefix where infra state is stored"
-  default     = "state/infra"
+  default     = "state/uc1/infra"
 }
 
 variable "bigip_state_prefix" {
   type        = string
   description = "GCS prefix where bigip-base state is stored"
-  default     = "state/bigip-base"
+  default     = "state/uc1/bigip-base"
 }
 
 /* 
@@ -76,7 +76,7 @@ variable "xc_waf_blocking" {
   default     = false
 }
 
-# XC AI/ML Settings for MUD, APIP - NOTE: Only set if using AI/ML settings from the shared namespace
+# XC AI/ML settings for MUD and APIP. Only set when using shared-namespace AI/ML.
 variable "xc_app_type" {
   type        = list(any)
   description = "Set Apptype for shared AI/ML"

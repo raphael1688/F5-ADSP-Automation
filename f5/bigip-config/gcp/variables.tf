@@ -21,13 +21,13 @@ variable "tf_state_bucket" {
 variable "infra_state_prefix" {
   type        = string
   description = "GCS prefix where infra state is stored."
-  default     = "state/infra"
+  default     = "state/uc1/infra"
 }
 
 variable "compute_state_prefix" {
   type        = string
   description = "GCS prefix where compute state is stored."
-  default     = "state/compute"
+  default     = "state/uc1/compute"
 }
 
 variable "backend_compute" {

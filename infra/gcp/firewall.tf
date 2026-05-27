@@ -1,11 +1,27 @@
-############################ Firewall Rules (SG Equivalents) ############################
+############################ Firewall Rules ############################
 
-# In GCP, firewall rules are attached to the VPC and target instances via network tags.
-# Apply these tags to VMs / instance templates / MIGs / GKE nodes as appropriate.
 locals {
   tag_external   = "${var.project_prefix}-ext"
   tag_management = "${var.project_prefix}-mgmt"
   tag_internal   = "${var.project_prefix}-int"
+  tag_nic_ext    = "${var.project_prefix}-nic-ext"
+
+  # F5 Distributed Cloud regional egress ranges. 
+  xc_origin_ranges = [
+    "5.182.215.0/25",
+    "84.54.61.0/25",
+    "23.158.32.0/25",
+    "84.54.62.0/25",
+    "185.94.142.0/25",
+    "185.94.143.0/25",
+    "159.60.190.0/24",
+    "159.60.168.0/24",
+    "159.60.180.0/24",
+    "159.60.174.0/24",
+    "159.60.176.0/24",
+    "50.53.127.175/32",
+    "104.219.107.84/32",
+  ]
 }
 
 # Management from admin_src_addr
@@ -89,22 +105,27 @@ resource "google_compute_firewall" "bigip_external" {
   direction = "INGRESS"
   priority  = 1000
 
-  target_tags = ["${var.project_prefix}-bigip-ext"]
-  source_ranges = concat(var.admin_src_addr, [
-    "5.182.215.0/25",
-    "84.54.61.0/25",
-    "23.158.32.0/25",
-    "84.54.62.0/25",
-    "185.94.142.0/25",
-    "185.94.143.0/25",
-    "159.60.190.0/24",
-    "159.60.168.0/24",
-    "159.60.180.0/24",
-    "159.60.174.0/24",
-    "159.60.176.0/24",
-    "50.53.127.175/32",
-    "104.219.107.84/32",
-  ])
+  target_tags   = ["${var.project_prefix}-bigip-ext"]
+  source_ranges = concat(var.admin_src_addr, local.xc_origin_ranges)
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+}
+
+############################ NIC Firewall Rules (Conditional) ############################
+
+# NIC External (Data Plane)
+resource "google_compute_firewall" "nic_external" {
+  count     = var.nic ? 1 : 0
+  name      = "${var.project_prefix}-fw-nic-ext-${random_id.build_suffix.hex}"
+  network   = google_compute_network.vpc.name
+  direction = "INGRESS"
+  priority  = 1000
+
+  target_tags   = [local.tag_nic_ext]
+  source_ranges = concat(var.admin_src_addr, local.xc_origin_ranges)
 
   allow {
     protocol = "tcp"
