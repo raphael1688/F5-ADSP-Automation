@@ -1,49 +1,43 @@
-# F5 Application Delivery and Security Platform with CI/CD
+# F5 Application Delivery and Security Platform Automation
 
-This repository demonstrates how the **F5 Application Delivery and Security Platform (ADSP)** from **F5, Inc.** can be deployed using a structured, production-aligned CI/CD workflow.
+CI/CD-driven deployment of F5 Application Delivery and Security Platform (ADSP) use cases. Each use case provisions its own complete infrastructure build via Terraform and GitHub Actions, with state stored in Google Cloud Storage. Use cases are deployed one at a time and do not share live infrastructure.
 
-The project is intentionally designed to be:
+## Use cases
 
-- **Forkable**
-- **Cloud-native**
-- **Modular**
-- **Real-world aligned**
-- **Automation-first**
+| ID | Description | Cloud | Guide |
+|----|-------------|-------|-------|
+| UC1 | BIG-IP with AWAF fronting vulnerable applications, F5 Distributed Cloud HTTP LB with WAF on top | GCP | [Deploy UC1 in Google Cloud](docs/ADSP-UC1-GCP.md) |
+| UC2 | NGINX Ingress Controller with NGINX App Protect on GKE, NGINX One for fleet management, F5 Distributed Cloud with API security on top | GCP | [Deploy UC2 in Google Cloud](docs/ADSP-UC2-GCP.md) |
 
-This is not a click-through lab.  
-This repository shows how ADSP components can be provisioned and composed using Terraform and GitHub Actions in a repeatable deployment pipeline.
+Pick a use case and follow its deployment guide.
 
-## Quick Start
+## Repository layout
 
-1. **Read the deployment guide:** [Deploy Use-Case 1 in Google Cloud](docs/ADSP-UC1-GCP.md)
-2. **Configure settings:**
-   - `config/common/gcp/env.json` - GCP project, region, prefix
-   - `config/uc1/gcp/env.json` - Use-case specific settings
-   - `config/uc1/xc/env.json` - F5 Distributed Cloud config
-3. **Set GitHub Secrets** (see deployment guide)
-4. **Push to `deploy-adsp-uc1` branch** to deploy
+- `infra/<cloud>/` — shared per-cloud networking
+- `compute/<cloud>/` — application VMs (UC1)
+- `k8s/<cloud>/` — Kubernetes cluster (UC2)
+- `f5/bigip-base/<cloud>/`, `f5/bigip-config/<cloud>/` — BIG-IP instance and AS3 declaration (UC1)
+- `f5/nic/<cloud>/` — NGINX Ingress Controller and App Protect (UC2)
+- `f5/xc/` — F5 Distributed Cloud, cloud-agnostic, shared across use cases
+- `apps/` — application manifests referenced by use cases
+- `config/common/<cloud>/` — shared cloud config
+- `config/uc<N>/<cloud-or-xc>/` — per-UC config
+- `.github/workflows/` — deploy and destroy workflows per UC
+- `docs/` — per-UC deployment guides
 
-## Architecture
+## Conventions
 
-- **Infra:** VPC with segmented subnets (management, external, internal, application)
-- **Compute:** Vulnerable applications (OWASP Juice Shop, crAPI)
-- **F5 BIG-IP:** Application Delivery Controller with AWAF (single-NIC)
-- **F5 Distributed Cloud:** Cloud-native application security and delivery
-
-## Deployment Branches
-
-- `deploy-adsp-uc1` - Validate, plan, and apply infrastructure
-- `test-adsp-uc1` - Validate only (no apply)
-- `destroy-adsp-uc1` - Destroy all resources
-
-## Documentation
-
-- [Deploy Use-Case 1 in Google Cloud](docs/ADSP-UC1-GCP.md) - Complete deployment guide
+- State lives at `state/uc<N>/<module>/` in the shared state bucket. Artifacts (AS3 declarations, NAP policy bundles, etc.) live at `artifacts/uc<N>/`.
+- Branches drive workflow runs:
+  - `deploy-adsp-uc<N>` runs validate, plan, apply
+  - `test-adsp-uc<N>` runs validate only
+  - `destroy-adsp-uc<N>` runs the destroy workflow in reverse module order
+- Terraform modules are shared across use cases. Feature flags in each UC's config select which resources get created.
 
 ## Requirements
 
-- GCP Project with Workload Identity Federation
-- F5 Distributed Cloud tenant with API certificate
-- GitHub Actions enabled
+- A GCP project with billing enabled and Workload Identity Federation configured for GitHub Actions
+- An F5 Distributed Cloud tenant with an API certificate
+- GitHub Actions enabled on the forked repository
 
-For detailed prerequisites, configuration, and troubleshooting, see the [deployment guide](docs/ADSP-UC1-GCP.md).
+Per-UC quotas, IAM roles, and configuration are documented in each use case guide.

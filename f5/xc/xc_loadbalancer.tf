@@ -1,14 +1,7 @@
-# loadbalancer.tf 
-
-resource "null_resource" "wait_for_ce_site" {
-  count = var.hybrid_genai ? 1 : 0
-}
+# loadbalancer.tf
 
 resource "volterra_origin_pool" "op" {
-  depends_on = [
-    volterra_namespace.this,
-    null_resource.wait_for_ce_site
-  ]
+  depends_on  = [volterra_namespace.this]
   name        = format("%s-xcop-%s", local.project_prefix, local.build_suffix)
   namespace   = var.xc_namespace
   description = format("Origin pool pointing to origin server %s", local.origin_server)
@@ -23,7 +16,7 @@ resource "volterra_origin_pool" "op" {
   }
 
   dynamic "origin_servers" {
-    for_each = (!local.dns_origin_pool && !var.k8s_pool) ? [1] : []
+    for_each = local.dns_origin_pool ? [] : [1]
     content {
       public_ip {
         ip = local.origin_server
@@ -31,25 +24,8 @@ resource "volterra_origin_pool" "op" {
     }
   }
 
-  dynamic "origin_servers" {
-    for_each = var.k8s_pool ? [1] : []
-    content {
-      k8s_service {
-        service_name    = var.serviceName
-        vk8s_networks   = true
-        outside_network = true
-        site_locator {
-          site {
-            name      = var.hybrid_genai ? var.eks_site_name : coalesce(var.eks_site_name, var.gke_site_name, local.project_prefix)
-            namespace = "system"
-          }
-        }
-      }
-    }
-  }
-
   no_tls = true
-  port   = tostring(var.k8s_pool ? var.serviceport : local.origin_port)
+  port   = tostring(local.origin_port)
 
   endpoint_selection     = "LOCAL_PREFERRED"
   loadbalancer_algorithm = "LB_OVERRIDE"
@@ -74,21 +50,6 @@ resource "volterra_http_loadbalancer" "lb_https" {
   domains                         = [var.app_domain]
   advertise_on_public_default_vip = true
 
-  dynamic "advertise_custom" {
-    for_each = var.advertise_sites ? [1] : []
-    content {
-      advertise_where {
-        site {
-          site {
-            name      = var.hybrid_genai ? var.gke_site_name : coalesce(var.eks_site_name, var.gke_site_name, local.project_prefix)
-            namespace = "system"
-          }
-          network = "SITE_NETWORK_INSIDE_AND_OUTSIDE"
-        }
-      }
-    }
-  }
-
   default_route_pools {
     pool {
       name      = volterra_origin_pool.op.name
@@ -97,16 +58,10 @@ resource "volterra_http_loadbalancer" "lb_https" {
     weight = 1
   }
 
-  dynamic "http" {
-    for_each = var.http_only ? [1] : []
-    content {
-      dns_volterra_managed = var.xc_delegation
-      port                 = "80"
-    }
-  }
-
+  # TLS termination: auto-cert (XC-managed) by default, or a referenced
+  # volterra_certificate (BYO) when xc_byo_cert is set with a name.
   dynamic "https_auto_cert" {
-    for_each = var.http_only ? [] : [1]
+    for_each = (var.xc_byo_cert && var.xc_byo_cert_name != "") ? [] : [1]
     content {
       add_hsts              = false
       http_redirect         = true
@@ -118,15 +73,44 @@ resource "volterra_http_loadbalancer" "lb_https" {
     }
   }
 
+  dynamic "https" {
+    for_each = (var.xc_byo_cert && var.xc_byo_cert_name != "") ? [1] : []
+    content {
+      add_hsts              = false
+      http_redirect         = true
+      enable_path_normalize = true
+      tls_cert_params {
+        no_mtls = true
+        certificates {
+          name      = var.xc_byo_cert_name
+          namespace = var.xc_byo_cert_namespace
+        }
+        tls_config {
+          default_security = true
+        }
+      }
+    }
+  }
+
   app_firewall {
     name      = volterra_app_firewall.waap-tf.name
     namespace = var.xc_namespace
   }
 
+  # WAF Exclusion 
+  dynamic "waf_exclusion" {
+    for_each = (var.xc_waf_exclusion && var.xc_waf_exclusion_policy_name != "") ? [1] : []
+    content {
+      waf_exclusion_policy {
+        name      = var.xc_waf_exclusion_policy_name
+        namespace = var.xc_waf_exclusion_policy_namespace
+      }
+    }
+  }
+
   disable_waf                     = false
   round_robin                     = true
   service_policies_from_namespace = true
-  multi_lb_app                    = var.xc_multi_lb
   user_id_client_ip               = true
   source_ip_stickiness            = true
 
@@ -145,13 +129,37 @@ resource "volterra_http_loadbalancer" "lb_https" {
     }
   }
 
+  # Sensitive Data Policy
+  dynamic "sensitive_data_policy" {
+    for_each = var.xc_sensitive_data_policy ? [1] : []
+    content {
+      sensitive_data_policy_ref {
+        name      = volterra_sensitive_data_policy.this[0].name
+        namespace = volterra_sensitive_data_policy.this[0].namespace
+      }
+    }
+  }
+
   # API Discovery
   dynamic "enable_api_discovery" {
     for_each = var.xc_api_disc ? [1] : []
     content {
       enable_learn_from_redirect_traffic = true
+      default_api_auth_discovery         = var.xc_api_auth_discovery
+
       discovered_api_settings {
         purge_duration_for_inactive_discovered_apis = 5
+      }
+
+      dynamic "api_crawler" {
+        for_each = var.xc_api_crawler ? [1] : []
+        content {
+          api_crawler_config {
+            domains {
+              domain = var.app_domain
+            }
+          }
+        }
       }
     }
   }
@@ -321,6 +329,28 @@ resource "volterra_http_loadbalancer" "lb_https" {
     }
   }
 
+  # API Rate Limit 
+  dynamic "api_rate_limit" {
+    for_each = var.xc_api_rate_limit ? [1] : []
+    content {
+      no_ip_allowed_list = true
+
+      server_url_rules {
+        any_domain = true
+        base_path  = var.xc_api_rate_limit_base_path
+
+        client_matcher {
+          any_client = true
+        }
+
+        inline_rate_limiter {
+          threshold = var.xc_api_rate_limit_threshold
+          unit      = var.xc_api_rate_limit_unit
+        }
+      }
+    }
+  }
+
   # JWT Validation
   dynamic "jwt_validation" {
     for_each = var.xc_jwt_val ? [1] : []
@@ -385,8 +415,40 @@ resource "volterra_http_loadbalancer" "lb_https" {
     }
   }
 
+  # Bot Defense Advanced 
+  dynamic "bot_defense_advanced" {
+    for_each = (var.xc_bot_def_advanced && var.xc_bot_def_advanced_web_policy_name != "") ? [1] : []
+    content {
+      web {
+        name      = var.xc_bot_def_advanced_web_policy_name
+        namespace = var.xc_bot_def_advanced_web_policy_namespace
+      }
+      js_insert_all_pages {
+        javascript_location = "AFTER_HEAD"
+      }
+    }
+  }
+
+  # Client-Side Defense
+  dynamic "client_side_defense" {
+    for_each = var.xc_client_side_defense ? [1] : []
+    content {
+      policy {
+        js_insert_all_pages = true
+      }
+    }
+  }
+
   # DDoS
-  l7_ddos_action_block = var.xc_ddos_pro
+  dynamic "l7_ddos_protection" {
+    for_each = var.xc_ddos_pro ? [1] : []
+    content {
+      mitigation_block       = true
+      clientside_action_none = true
+      ddos_policy_none       = true
+      rps_threshold          = var.xc_l7_ddos_rps_threshold
+    }
+  }
 
   dynamic "ddos_mitigation_rules" {
     for_each = var.xc_ddos_pro ? [1] : []
@@ -400,6 +462,29 @@ resource "volterra_http_loadbalancer" "lb_https" {
       }
     }
   }
+
+  # Slow-DDoS Mitigation
+  dynamic "slow_ddos_mitigation" {
+    for_each = var.xc_slow_ddos ? [1] : []
+    content {
+      request_headers_timeout = var.xc_slow_ddos_request_headers_timeout
+      request_timeout         = var.xc_slow_ddos_request_timeout
+    }
+  }
+
+  # IP Reputation
+  disable_ip_reputation = var.xc_ip_reputation ? null : true
+
+  dynamic "enable_ip_reputation" {
+    for_each = var.xc_ip_reputation ? [1] : []
+    content {
+      ip_threat_categories = var.xc_ip_threat_categories
+    }
+  }
+
+  # Threat Mesh
+  enable_threat_mesh  = var.xc_threat_mesh ? true : null
+  disable_threat_mesh = var.xc_threat_mesh ? null : true
 
   # Common Security Controls
   disable_rate_limit              = true
@@ -424,13 +509,6 @@ resource "volterra_http_loadbalancer" "lb_https" {
         namespace = volterra_malicious_user_mitigation.mud-mitigation[0].namespace
         name      = volterra_malicious_user_mitigation.mud-mitigation[0].name
       }
-    }
-  }
-
-  dynamic "more_option" {
-    for_each = var.hybrid_genai ? [1] : []
-    content {
-      idle_timeout = 300000
     }
   }
 }

@@ -30,8 +30,6 @@ resource "volterra_app_setting" "mud-app-settings" {
 	    }
         // One of the arguments from this list "exclude_ip_reputation include_ip_reputation" must be set
         include_ip_reputation = true
-        // One of the arguments from this list "exclude_non_existent_url_activity include_non_existent_url_activity_custom include_non_existent_url_activity_automatic" must be set
-        exclude_non_existent_url_activity = true
         // One of the arguments from this list "include_waf_activity exclude_waf_activity" must be set
         include_waf_activity = true
       }

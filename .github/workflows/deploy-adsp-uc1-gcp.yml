@@ -130,7 +130,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/infra"
+            -backend-config="prefix=state/uc1/infra"
 
       - name: Terraform Validate
         run: terraform validate -no-color
@@ -139,7 +139,6 @@ jobs:
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform plan -no-color -input=false -var-file=/tmp/infra.tfvars.json
 
-      # Apply only on deploy branch (commented out while testing)
       - name: Terraform Apply
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/infra.tfvars.json
@@ -171,7 +170,7 @@ jobs:
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/infra",
+            infra_state_prefix: "state/uc1/infra",
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
@@ -229,7 +228,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/compute"
+            -backend-config="prefix=state/uc1/compute"
 
       - name: Terraform Validate
         run: terraform validate -no-color
@@ -238,7 +237,6 @@ jobs:
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform plan -no-color -input=false -var-file=/tmp/compute.tfvars.json
 
-      # Apply only on deploy branch (commented out while testing)
       - name: Terraform Apply
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/compute.tfvars.json
@@ -270,8 +268,8 @@ jobs:
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/infra",
-            bigip_config_state_prefix: "state/bigip-config",
+            infra_state_prefix: "state/uc1/infra",
+            bigip_config_state_prefix: "state/uc1/bigip-config",
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
@@ -325,7 +323,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/bigip-base"
+            -backend-config="prefix=state/uc1/bigip-base"
 
       - name: Terraform Validate
         run: terraform validate -no-color
@@ -334,7 +332,6 @@ jobs:
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform plan -no-color -input=false -var-file=/tmp/bigip-base.tfvars.json
 
-      # Apply only on deploy branch (commented out while testing)
       - name: Terraform Apply
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/bigip-base.tfvars.json
@@ -365,8 +362,8 @@ jobs:
             gcp_region,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/infra",
-            compute_state_prefix: "state/compute",
+            infra_state_prefix: "state/uc1/infra",
+            compute_state_prefix: "state/uc1/compute",
 
             backend_compute: (.bigip_config.backend_compute // false),
             awaf_config_payload: (.bigip_config.awaf_config_payload // "../config/awaf-config.json"),
@@ -389,7 +386,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/bigip-config"
+            -backend-config="prefix=state/uc1/bigip-config"
 
       - name: Terraform Validate
         run: terraform validate -no-color
@@ -398,7 +395,6 @@ jobs:
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform plan -no-color -input=false -var-file=/tmp/bigip-config.tfvars.json
 
-      # Apply only on deploy branch (commented out while testing)
       - name: Terraform Apply
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/bigip-config.tfvars.json
@@ -431,8 +427,8 @@ jobs:
             gcp_region: .gcp_region,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/infra",
-            bigip_state_prefix: "state/bigip-base",
+            infra_state_prefix: "state/uc1/infra",
+            bigip_state_prefix: "state/uc1/bigip-base",
 
             xc_tenant: .xc_base.xc_tenant,
             api_url: .xc_base.api_url,
@@ -448,6 +444,10 @@ jobs:
 
             xc_app_type: (.xc_base.xc_app_type // []),
             xc_multi_lb: (.xc_base.xc_multi_lb // false),
+
+            xc_byo_cert: (.xc_base.xc_byo_cert // false),
+            xc_byo_cert_name: (.xc_base.xc_byo_cert_name // ""),
+            xc_byo_cert_namespace: (.xc_base.xc_byo_cert_namespace // "shared"),
 
             xc_api_disc: (.xc_features.xc_api_disc // false),
             xc_api_pro: (.xc_features.xc_api_pro // false),
@@ -471,9 +471,32 @@ jobs:
             exp_claim: (.xc_features.exp_claim // false),
 
             xc_bot_def: (.xc_features.xc_bot_def // false),
+            xc_bot_def_advanced: (.xc_features.xc_bot_def_advanced // false),
+            xc_bot_def_advanced_web_policy_name: (.xc_features.xc_bot_def_advanced_web_policy_name // ""),
+            xc_bot_def_advanced_web_policy_namespace: (.xc_features.xc_bot_def_advanced_web_policy_namespace // "shared"),
             xc_ddos_pro: (.xc_features.xc_ddos_pro // false),
+            xc_l7_ddos_rps_threshold: (.xc_features.xc_l7_ddos_rps_threshold // 100),
+            xc_slow_ddos: (.xc_features.xc_slow_ddos // false),
+            xc_slow_ddos_request_headers_timeout: (.xc_features.xc_slow_ddos_request_headers_timeout // 10),
+            xc_slow_ddos_request_timeout: (.xc_features.xc_slow_ddos_request_timeout // 60),
+            xc_ip_reputation: (.xc_features.xc_ip_reputation // false),
+            xc_ip_threat_categories: (.xc_features.xc_ip_threat_categories // ["SPAM_SOURCES","WINDOWS_EXPLOITS","WEB_ATTACKS","BOTNETS","SCANNERS","DOS_ATTACKS","PHISHING","PROXY","TOR_PROXY"]),
+            xc_threat_mesh: (.xc_features.xc_threat_mesh // false),
+            xc_api_rate_limit: (.xc_features.xc_api_rate_limit // false),
+            xc_api_rate_limit_threshold: (.xc_features.xc_api_rate_limit_threshold // 100),
+            xc_api_rate_limit_unit: (.xc_features.xc_api_rate_limit_unit // "MINUTE"),
+            xc_api_rate_limit_base_path: (.xc_features.xc_api_rate_limit_base_path // "/"),
             xc_mud: (.xc_features.xc_mud // false),
-            xc_data_guard: (.xc_features.xc_data_guard // false)
+            xc_data_guard: (.xc_features.xc_data_guard // false),
+
+            xc_api_crawler: (.xc_features.xc_api_crawler // false),
+            xc_api_auth_discovery: (.xc_features.xc_api_auth_discovery // false),
+            xc_client_side_defense: (.xc_features.xc_client_side_defense // false),
+            xc_waf_exclusion: (.xc_features.xc_waf_exclusion // false),
+            xc_waf_exclusion_policy_name: (.xc_features.xc_waf_exclusion_policy_name // ""),
+            xc_waf_exclusion_policy_namespace: (.xc_features.xc_waf_exclusion_policy_namespace // "shared"),
+            xc_sensitive_data_policy: (.xc_features.xc_sensitive_data_policy // false),
+            xc_sensitive_data_compliances: (.xc_features.xc_sensitive_data_compliances // [])
           }' "$COMMON" "$UC_XC" > /tmp/xc.tfvars.json
 
       - name: Auth to Google Cloud (WIF)
@@ -491,7 +514,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/xc"
+            -backend-config="prefix=state/uc1/xc"
 
       - name: Terraform Validate
         run: terraform validate -no-color
@@ -500,7 +523,6 @@ jobs:
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform plan -no-color -input=false -var-file=/tmp/xc.tfvars.json
 
-      # Apply only on deploy branch (commented out while testing)
       - name: Terraform Apply
         if: github.ref == 'refs/heads/deploy-adsp-uc1'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/xc.tfvars.json

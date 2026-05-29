@@ -9,21 +9,16 @@ resource "google_compute_network" "vpc" {
 }
 
 ############################ CIDR PLAN ############################
-# This deployment is single-region and does not require multiple AZs.
-# We carve the VPC CIDR into 4 non-overlapping regional subnet ranges:
-# - external (/18)
-# - internal (/18)
-# - app     (/18)
-# - management (small /24 carved out of its own /18 block)
+# Single-region VPC carved into four /18 supernets: mgmt, external,
+# internal, app. Management uses only the first /24 of its supernet;
+# the rest of that /18 is reserved for future mgmt-adjacent subnets.
 
 locals {
-  # Split the VPC CIDR into 4 equal /18 blocks (assuming /16 base; still works for other sizes)
   cidr_block_mgmt_super = cidrsubnet(var.cidr, 2, 0)
   cidr_block_external   = cidrsubnet(var.cidr, 2, 1)
   cidr_block_internal   = cidrsubnet(var.cidr, 2, 2)
   cidr_block_app        = cidrsubnet(var.cidr, 2, 3)
 
-  # Management is intentionally smaller: first /24 within the mgmt supernet
   cidr_management = cidrsubnet(local.cidr_block_mgmt_super, 6, 0)
 }
 
@@ -57,6 +52,32 @@ resource "google_compute_subnetwork" "app" {
   network       = google_compute_network.vpc.id
 }
 
+############################ GKE Subnet ############################
+
+locals {
+  k8s_pods_range_name     = "${var.project_prefix}-k8s-pods"
+  k8s_services_range_name = "${var.project_prefix}-k8s-svcs"
+}
+
+resource "google_compute_subnetwork" "k8s" {
+  count                    = var.gke ? 1 : 0
+  name                     = "${var.project_prefix}-k8s-subnet"
+  ip_cidr_range            = var.k8s_cidr
+  region                   = var.gcp_region
+  network                  = google_compute_network.vpc.id
+  private_ip_google_access = true
+
+  secondary_ip_range {
+    range_name    = local.k8s_pods_range_name
+    ip_cidr_range = var.k8s_pods_cidr
+  }
+
+  secondary_ip_range {
+    range_name    = local.k8s_services_range_name
+    ip_cidr_range = var.k8s_services_cidr
+  }
+}
+
 ############################ Default route to Internet ############################
 
 resource "google_compute_route" "default_internet" {
@@ -67,17 +88,21 @@ resource "google_compute_route" "default_internet" {
   priority         = 1000
 }
 
-############################ NAT (optional) ############################
+############################ NAT ############################
+
+locals {
+  nat_enabled = var.create_nat_gateway || var.gke
+}
 
 resource "google_compute_router" "nat_router" {
-  count   = var.create_nat_gateway ? 1 : 0
+  count   = local.nat_enabled ? 1 : 0
   name    = "${var.project_prefix}-router"
   region  = var.gcp_region
   network = google_compute_network.vpc.id
 }
 
 resource "google_compute_router_nat" "nat" {
-  count                              = var.create_nat_gateway ? 1 : 0
+  count                              = local.nat_enabled ? 1 : 0
   name                               = "${var.project_prefix}-nat"
   router                             = google_compute_router.nat_router[0].name
   region                             = var.gcp_region

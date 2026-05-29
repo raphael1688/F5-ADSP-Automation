@@ -12,8 +12,6 @@ terraform {
     }
   }
 
-  # Backend is intentionally left unconfigured here.
-  # In GitHub Actions, run:
-  #   terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="prefix=state/infra"
+  # Backend configured via -backend-config at init time.
   backend "gcs" {}
 }

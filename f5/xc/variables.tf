@@ -19,13 +19,13 @@ variable "tf_state_bucket" {
 variable "infra_state_prefix" {
   type        = string
   description = "GCS prefix where infra state is stored"
-  default     = "state/infra"
+  default     = "state/uc1/infra"
 }
 
 variable "bigip_state_prefix" {
   type        = string
   description = "GCS prefix where bigip-base state is stored"
-  default     = "state/bigip-base"
+  default     = "state/uc1/bigip-base"
 }
 
 /* 
@@ -41,6 +41,18 @@ variable "backend_bigip" {
   type        = bool
   description = "Whether to reference BIG-IP remote state"
   default     = false
+}
+
+variable "backend_nic" {
+  type        = bool
+  description = "Whether to reference NIC remote state for the origin LoadBalancer IP."
+  default     = false
+}
+
+variable "nic_state_prefix" {
+  type        = string
+  description = "GCS prefix where NIC + NAP state is stored. Read when backend_nic is true."
+  default     = "state/uc2/nic"
 }
 
 # XC
@@ -76,7 +88,7 @@ variable "xc_waf_blocking" {
   default     = false
 }
 
-# XC AI/ML Settings for MUD, APIP - NOTE: Only set if using AI/ML settings from the shared namespace
+# XC AI/ML settings for MUD and APIP. Only set when using shared-namespace AI/ML.
 variable "xc_app_type" {
   type        = list(any)
   description = "Set Apptype for shared AI/ML"
@@ -93,6 +105,18 @@ variable "xc_multi_lb" {
 variable "xc_api_disc" {
   type        = bool
   description = "Enable API Discovery on single LB"
+  default     = false
+}
+
+variable "xc_api_crawler" {
+  type        = bool
+  description = "Enable the active API crawler against app_domain (requires xc_api_disc)."
+  default     = false
+}
+
+variable "xc_api_auth_discovery" {
+  type        = bool
+  description = "Enable default API authentication discovery (requires xc_api_disc)."
   default     = false
 }
 
@@ -216,11 +240,112 @@ variable "xc_bot_def" {
   default     = false
 }
 
+variable "xc_bot_def_advanced" {
+  type        = bool
+  description = "Enable the modern bot_defense_advanced block. Mutually exclusive with xc_bot_def."
+  default     = false
+}
+
+variable "xc_bot_def_advanced_web_policy_name" {
+  type        = string
+  description = "Name of a pre-existing bot defense (web) policy in XC. Required when xc_bot_def_advanced is true."
+  default     = ""
+}
+
+variable "xc_bot_def_advanced_web_policy_namespace" {
+  type        = string
+  description = "Namespace of the referenced bot defense (web) policy."
+  default     = "shared"
+}
+
 # XC DDoS Protection
 variable "xc_ddos_pro" {
   type        = bool
   description = "Enable XC DDoS Protection"
   default     = false
+}
+
+variable "xc_l7_ddos_rps_threshold" {
+  type        = number
+  description = "Per-source RPS threshold above which the L7 DDoS mitigation engages."
+  default     = 100
+}
+
+variable "xc_slow_ddos" {
+  type        = bool
+  description = "Enable slow-DDoS mitigation (request header / full request timeouts)."
+  default     = false
+}
+
+variable "xc_slow_ddos_request_headers_timeout" {
+  type        = number
+  description = "Maximum seconds allowed to receive complete request headers."
+  default     = 10
+}
+
+variable "xc_slow_ddos_request_timeout" {
+  type        = number
+  description = "Maximum seconds allowed for the full request to complete."
+  default     = 60
+}
+
+# XC IP Reputation
+variable "xc_ip_reputation" {
+  type        = bool
+  description = "Enable IP reputation filtering against the listed threat categories."
+  default     = false
+}
+
+variable "xc_ip_threat_categories" {
+  type        = list(string)
+  description = "Threat categories to match (e.g., SPAM_SOURCES, WINDOWS_EXPLOITS, TOR_PROXY)."
+  default = [
+    "SPAM_SOURCES",
+    "WINDOWS_EXPLOITS",
+    "WEB_ATTACKS",
+    "BOTNETS",
+    "SCANNERS",
+    "DOS_ATTACKS",
+    "PHISHING",
+    "PROXY",
+    "TOR_PROXY"
+  ]
+}
+
+# XC Threat Mesh
+variable "xc_threat_mesh" {
+  type        = bool
+  description = "Opt the LB into the cross-tenant XC threat mesh signal."
+  default     = false
+}
+
+# XC API Rate Limit (modern api_rate_limit block, replaces api_rate_limit_legacy)
+variable "xc_api_rate_limit" {
+  type        = bool
+  description = "Enable the modern API rate limit with a baseline global rule."
+  default     = false
+}
+
+variable "xc_api_rate_limit_threshold" {
+  type        = number
+  description = "Request count threshold for the baseline rate limit rule."
+  default     = 100
+}
+
+variable "xc_api_rate_limit_unit" {
+  type        = string
+  description = "Rate limit window unit (SECOND, MINUTE, HOUR)."
+  default     = "MINUTE"
+  validation {
+    condition     = contains(["SECOND", "MINUTE", "HOUR"], var.xc_api_rate_limit_unit)
+    error_message = "xc_api_rate_limit_unit must be one of: SECOND, MINUTE, HOUR."
+  }
+}
+
+variable "xc_api_rate_limit_base_path" {
+  type        = string
+  description = "Base path the baseline rate limit rule applies to."
+  default     = "/"
 }
 
 # XC Malicious User Detection
@@ -230,66 +355,53 @@ variable "xc_mud" {
   default     = false
 }
 
-# k8s service name
-variable "serviceName" {
-  type        = string
-  description = "k8s backend service details to access the demo application"
-  default     = ""
-}
-
-# k8s backend
-variable "k8s_pool" {
-  type        = bool
-  description = "Whether pool member is k8s backend ?"
-  default     = false
-}
-
-variable "advertise_sites" {
-  type        = bool
-  description = "Boolean to check if app needs to be advertised on given sites."
-  default     = false
-}
-
-variable "http_only" {
-  type        = bool
-  description = "If type of LB need to be set as http. Use this as True for CE site deployments."
-  default     = false
-}
-
-variable "serviceport" {
-  type        = number
-  description = "k8s backend application service port details"
-  default     = 80
-}
-
-variable "gke_site_name" {
-  type        = string
-  description = "CE site name to advertise load balancer."
-  default     = ""
-}
-
-variable "eks_site_name" {
-  type        = string
-  description = "CE site name to advertise load balancer."
-  default     = ""
-}
-
 variable "xc_data_guard" {
   type        = bool
   description = "F5 XC Data Guard"
   default     = false
 }
 
-variable "xc_delegation" {
+variable "xc_client_side_defense" {
   type        = bool
-  description = "F5 XC Domain delegation"
+  description = "Enable client-side defense (JS insertion for monitoring client-side script tampering)."
   default     = false
+}
+
+# XC WAF Exclusion (modern singular waf_exclusion block referencing a policy)
+variable "xc_waf_exclusion" {
+  type        = bool
+  description = "Attach a pre-existing volterra_waf_exclusion_policy to the LB."
+  default     = false
+}
+
+variable "xc_waf_exclusion_policy_name" {
+  type        = string
+  description = "Name of the pre-existing WAF exclusion policy. Required when xc_waf_exclusion is true."
+  default     = ""
+}
+
+variable "xc_waf_exclusion_policy_namespace" {
+  type        = string
+  description = "Namespace of the referenced WAF exclusion policy."
+  default     = "shared"
+}
+
+variable "xc_sensitive_data_policy" {
+  type        = bool
+  description = "Provision a baseline volterra_sensitive_data_policy and attach it to the LB."
+  default     = false
+}
+
+variable "xc_sensitive_data_compliances" {
+  type        = list(string)
+  description = "Compliance profiles applied to the sensitive data policy (e.g., COMPLIANCE_PCI, COMPLIANCE_HIPAA)."
+  default     = []
 }
 
 # Origin backend configuration
 variable "origin_server" {
   type        = string
-  description = "Origin server IP or DNS name (can be auto-discovered from remote state if backend_bigip/backend_compute enabled)"
+  description = "Origin server IP or DNS name (can be auto-discovered from remote state if backend_bigip/backend_nic enabled)"
   default     = ""
 }
 
@@ -299,8 +411,21 @@ variable "origin_port" {
   default     = 80
 }
 
-variable "hybrid_genai" {
+# TLS termination at the XC HTTP LoadBalancer
+variable "xc_byo_cert" {
   type        = bool
-  description = "Enable hybrid GenAI configuration"
+  description = "Use a pre-existing volterra_certificate (BYO TLS cert) on the LB instead of XC-managed auto-cert. Requires xc_byo_cert_name."
   default     = false
+}
+
+variable "xc_byo_cert_name" {
+  type        = string
+  description = "Name of the pre-existing volterra_certificate to attach. Required when xc_byo_cert is true."
+  default     = ""
+}
+
+variable "xc_byo_cert_namespace" {
+  type        = string
+  description = "Namespace of the referenced volterra_certificate."
+  default     = "shared"
 }

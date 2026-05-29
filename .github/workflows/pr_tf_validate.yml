@@ -34,6 +34,11 @@ jobs:
           terraform -chdir=compute/gcp init -backend=false
           terraform -chdir=compute/gcp validate -no-color
 
+      - name: Validate k8s
+        run: |
+          terraform -chdir=k8s/gcp init -backend=false
+          terraform -chdir=k8s/gcp validate -no-color
+
       - name: Validate bigip-base
         run: |
           terraform -chdir=f5/bigip-base/gcp init -backend=false
@@ -43,6 +48,16 @@ jobs:
         run: |
           terraform -chdir=f5/bigip-config/gcp init -backend=false
           terraform -chdir=f5/bigip-config/gcp validate -no-color
+
+      - name: Validate nic
+        run: |
+          terraform -chdir=f5/nic/gcp init -backend=false
+          terraform -chdir=f5/nic/gcp validate -no-color
+
+      - name: Validate app
+        run: |
+          terraform -chdir=app/gcp init -backend=false
+          terraform -chdir=app/gcp validate -no-color
 
       - name: Validate xc
         run: |

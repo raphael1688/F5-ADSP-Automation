@@ -20,4 +20,5 @@ api-key.pem
 f5/bigip-base/gcp/generated/
 
 *.back
+*.bak
 .idea

@@ -71,3 +71,38 @@ variable "bigip_cis" {
   type    = bool
   default = false
 }
+variable "gke" {
+  type        = bool
+  default     = false
+  description = "Provision GKE-supporting networking: dedicated k8s subnet with pod/service secondary ranges and Cloud NAT for private nodes."
+}
+
+variable "k8s_cidr" {
+  type        = string
+  default     = "10.10.0.0/22"
+  description = "Primary CIDR for the GKE node subnet (used only when gke = true)."
+  validation {
+    condition     = can(cidrnetmask(var.k8s_cidr))
+    error_message = "k8s_cidr must be a valid CIDR block."
+  }
+}
+
+variable "k8s_pods_cidr" {
+  type        = string
+  default     = "10.11.0.0/16"
+  description = "Secondary CIDR for GKE pods (alias IP range)."
+  validation {
+    condition     = can(cidrnetmask(var.k8s_pods_cidr))
+    error_message = "k8s_pods_cidr must be a valid CIDR block."
+  }
+}
+
+variable "k8s_services_cidr" {
+  type        = string
+  default     = "10.12.0.0/20"
+  description = "Secondary CIDR for GKE services (alias IP range)."
+  validation {
+    condition     = can(cidrnetmask(var.k8s_services_cidr))
+    error_message = "k8s_services_cidr must be a valid CIDR block."
+  }
+}

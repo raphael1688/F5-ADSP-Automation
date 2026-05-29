@@ -76,3 +76,25 @@ output "tag_int" {
   value       = "${var.project_prefix}-int"
   description = "Network tag for internal instances"
 }
+output "tag_nic_ext" {
+  value       = local.tag_nic_ext
+  description = "Network tag for NIC external-facing data plane (GKE LoadBalancer)"
+}
+
+# GKE subnet outputs (null when var.gke = false)
+output "k8s_subnet_id" {
+  value       = var.gke ? google_compute_subnetwork.k8s[0].id : null
+  description = "GKE primary subnet ID"
+}
+output "k8s_subnet_name" {
+  value       = var.gke ? google_compute_subnetwork.k8s[0].name : null
+  description = "GKE primary subnet name"
+}
+output "k8s_pods_range_name" {
+  value       = var.gke ? local.k8s_pods_range_name : null
+  description = "GKE pods secondary range name (alias IP)"
+}
+output "k8s_services_range_name" {
+  value       = var.gke ? local.k8s_services_range_name : null
+  description = "GKE services secondary range name (alias IP)"
+}

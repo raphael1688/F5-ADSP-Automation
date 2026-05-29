@@ -1,0 +1,62 @@
+controller:
+  kind: deployment
+  nginxplus: true
+  enableSnippets: true
+
+  image:
+    repository: ${nic_image_repository}
+    tag: "${nic_image_tag}"
+    pullPolicy: IfNotPresent
+
+  serviceAccount:
+    imagePullSecretName: ${regcred_secret_name}
+
+  mgmt:
+    licenseTokenSecretName: ${license_secret_name}
+    sslVerify: false
+
+  appprotect:
+    enable: true
+    v5: true
+    enforcer:
+      host: "127.0.0.1"
+      port: 50000
+      image:
+        repository: ${nap_enforcer_image}
+        tag: "${nap_enforcer_tag}"
+        pullPolicy: IfNotPresent
+    configManager:
+      image:
+        repository: ${nap_config_mgr_image}
+        tag: "${nap_config_mgr_tag}"
+        pullPolicy: IfNotPresent
+      volumeMounts:
+        - name: app-protect-bd-config
+          mountPath: /opt/app_protect/bd_config
+        - name: app-protect-config
+          mountPath: /opt/app_protect/config
+        - name: app-protect-bundles
+          mountPath: /etc/app_protect/bundles
+
+  volumes:
+    - name: app-protect-bd-config
+      emptyDir: {}
+    - name: app-protect-config
+      emptyDir: {}
+    - name: app-protect-bundles
+      secret:
+        secretName: ${bundle_secret_name}
+        items:
+          - key: ${policy_bundle_filename}
+            path: ${policy_bundle_filename}
+
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Local
+
+  readyStatus:
+    initialDelaySeconds: 30
+
+  nginxStatus:
+    allowCidrs: "127.0.0.1"
+    port: 9000

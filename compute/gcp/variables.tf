@@ -29,7 +29,7 @@ variable "tf_state_bucket" {
 variable "infra_state_prefix" {
   type        = string
   description = "GCS prefix where infra state is stored"
-  default     = "state/infra"
+  default     = "state/uc1/infra"
 }
 
 variable "machine_type" {
