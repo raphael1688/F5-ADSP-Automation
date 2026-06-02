@@ -8,26 +8,28 @@ CI/CD-driven deployment of F5 Application Delivery and Security Platform (ADSP) 
 |----|-------------|-------|-------|
 | UC1 | BIG-IP with AWAF fronting vulnerable applications, F5 Distributed Cloud HTTP LB with WAF on top | GCP | [Deploy UC1 in Google Cloud](docs/ADSP-UC1-GCP.md) |
 | UC2 | NGINX Ingress Controller with NGINX App Protect on GKE, NGINX One for fleet management, F5 Distributed Cloud with API security on top | GCP | [Deploy UC2 in Google Cloud](docs/ADSP-UC2-GCP.md) |
+| UC3 | BIG-IP fronting Docker-hosted comfy-capybara with self-signed TLS, F5 API Security Local Edition (ASLE) receiving telemetry via iRule | GCP | [Deploy UC3 in Google Cloud](docs/ADSP-UC3-GCP.md) |
 
 Pick a use case and follow its deployment guide.
 
 ## Repository layout
 
-- `infra/<cloud>/` — shared per-cloud networking
-- `compute/<cloud>/` — application VMs (UC1)
-- `k8s/<cloud>/` — Kubernetes cluster (UC2)
-- `f5/bigip-base/<cloud>/`, `f5/bigip-config/<cloud>/` — BIG-IP instance and AS3 declaration (UC1)
-- `f5/nic/<cloud>/` — NGINX Ingress Controller and App Protect (UC2)
-- `f5/xc/` — F5 Distributed Cloud, cloud-agnostic, shared across use cases
-- `apps/` — application manifests referenced by use cases
-- `config/common/<cloud>/` — shared cloud config
-- `config/uc<N>/<cloud-or-xc>/` — per-UC config
-- `.github/workflows/` — deploy and destroy workflows per UC
-- `docs/` — per-UC deployment guides
+- `infra/<cloud>/` - shared per-cloud networking
+- `compute/<cloud>/` - application VMs (UC1, UC3)
+- `k8s/<cloud>/` - Kubernetes cluster (UC2)
+- `f5/bigip-base/<cloud>/`, `f5/bigip-config/<cloud>/` - BIG-IP instance and AS3 declaration (UC1, UC3)
+- `f5/nic/<cloud>/` - NGINX Ingress Controller and App Protect (UC2)
+- `f5/asle-config/<cloud>/` - ASLE onboarding bundle uploader (UC3)
+- `f5/xc/` - F5 Distributed Cloud, cloud-agnostic, shared across use cases
+- `app/<cloud>/` - comfy-capybara Helm release and VirtualServer (UC2)
+- `config/common/<cloud>/` - shared cloud config
+- `config/uc<N>/<cloud-or-xc>/` - per-UC config
+- `.github/workflows/` - deploy and destroy workflows per UC
+- `docs/` - per-UC deployment guides
 
 ## Conventions
 
-- State lives at `state/uc<N>/<module>/` in the shared state bucket. Artifacts (AS3 declarations, NAP policy bundles, etc.) live at `artifacts/uc<N>/`.
+- State lives at `state/uc<N>/<module>/` in the shared state bucket. Artifacts (AS3 declarations, NAP policy bundles, ASLE config bundles, etc.) live at `artifacts/uc<N>/`.
 - Branches drive workflow runs:
   - `deploy-adsp-uc<N>` runs validate, plan, apply
   - `test-adsp-uc<N>` runs validate only
@@ -37,7 +39,10 @@ Pick a use case and follow its deployment guide.
 ## Requirements
 
 - A GCP project with billing enabled and Workload Identity Federation configured for GitHub Actions
-- An F5 Distributed Cloud tenant with an API certificate
 - GitHub Actions enabled on the forked repository
+- Per-UC F5 product entitlements:
+  - UC1, UC2: an F5 Distributed Cloud tenant with an API certificate
+  - UC2: an NGINX Plus subscription for the NIC + NAP V5 images
+  - UC3: an operator-supplied F5 API Security Local Edition (ASLE) image tarball uploaded to a GCS bucket the deploy service account can read
 
 Per-UC quotas, IAM roles, and configuration are documented in each use case guide.
