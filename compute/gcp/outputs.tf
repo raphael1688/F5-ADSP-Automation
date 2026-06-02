@@ -21,6 +21,14 @@ output "crapi_internal_ip" {
   value = length(google_compute_instance.crapi) > 0 ? google_compute_instance.crapi[0].network_interface[0].network_ip : ""
 }
 
+output "comfy_capybara_internal_ip" {
+  value = length(google_compute_instance.comfy_capybara) > 0 ? google_compute_instance.comfy_capybara[0].network_interface[0].network_ip : ""
+}
+
+output "asle_internal_ip" {
+  value = length(google_compute_instance.asle) > 0 ? google_compute_instance.asle[0].network_interface[0].network_ip : ""
+}
+
 output "private_key" {
   value     = tls_private_key.vm_ssh_key.private_key_pem
   sensitive = true

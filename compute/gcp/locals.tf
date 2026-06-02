@@ -38,4 +38,11 @@ locals {
     image = ""
   }
 
+  comfy = {
+    service_name = "comfy-capybara"
+  }
+
+  asle = {
+    service_name = "asle"
+  }
 }

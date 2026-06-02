@@ -5,11 +5,11 @@ data "terraform_remote_state" "infra" {
     prefix = var.infra_state_prefix
   }
 }
-data "terraform_remote_state" "bigip_config" {
-  count   = var.as3_gcs_uri == "" ? 1 : 0
+
+data "terraform_remote_state" "bigip_base" {
   backend = "gcs"
   config = {
     bucket = var.tf_state_bucket
-    prefix = var.bigip_config_state_prefix
+    prefix = var.bigip_base_state_prefix
   }
 }

@@ -1,0 +1,73 @@
+{
+  "class": "ADC",
+  "schemaVersion": "3.50.0",
+  "id": "UC3_APIVS_ASLE",
+  "Tenant_1": {
+    "class": "Tenant",
+    "App_1": {
+      "class": "Application",
+      "template": "https",
+      "serviceMain": {
+        "class": "Service_HTTPS",
+        "virtualAddresses": ["0.0.0.0"],
+        "virtualPort": 443,
+        "serverTLS": "tls_server_main",
+        "pool": "comfy_pool",
+        "iRules": ["asle_log_irule"]
+      },
+      "tls_server_main": {
+        "class": "TLS_Server",
+        "certificates": [{ "certificate": "self_signed_cert" }]
+      },
+      "self_signed_cert": {
+        "class": "Certificate",
+        "certificate": { "base64": "${cert_pem_b64}" },
+        "privateKey": { "base64": "${key_pem_b64}" }
+      },
+      "comfy_pool": {
+        "class": "Pool",
+        "monitors": ["http"],
+        "members": [{
+          "servicePort": ${app_server_port},
+          "serverAddresses": ["${app_server_ip}"]
+        }]
+      },
+      "api_pool": {
+        "class": "Pool",
+        "monitors": ["http"],
+        "members": [{
+          "servicePort": ${api_server_port},
+          "serverAddresses": ["${app_server_ip}"]
+        }]
+      },
+      "asle_log_irule": {
+        "class": "iRule",
+        "iRule": { "base64": "${irule_b64}" }
+      },
+      "internal_logging_pool": {
+        "class": "Pool",
+        "members": [{
+          "servicePort": 6514,
+          "serverAddresses": ["${bigip_internal_ip}"]
+        }]
+      },
+      "internal_logging_vs": {
+        "class": "Service_TCP",
+        "virtualAddresses": ["${bigip_internal_ip}"],
+        "virtualPort": 6514,
+        "pool": "external_collector_pool",
+        "clientTLS": "tls_client_to_asle"
+      },
+      "tls_client_to_asle": {
+        "class": "TLS_Client"
+      },
+      "external_collector_pool": {
+        "class": "Pool",
+        "members": [{
+          "servicePort": ${asle_telemetry_port},
+          "serverAddresses": ["${asle_ip}"]
+        }]
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
     "class": "ADC",
     "schemaVersion": "3.26.0",
-    "id": "LTM_VIP_AWAF",
+    "id": "LTM_HTTP_VS",
     "Tenant_1": {
         "class": "Tenant",
         "A1": {

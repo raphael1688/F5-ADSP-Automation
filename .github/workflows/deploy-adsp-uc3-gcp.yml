@@ -1,10 +1,10 @@
-name: "Deploy GCP ADSP Use-Case 1"
+name: "Deploy GCP ADSP Use-Case 3"
 
 on:
   push:
     branches:
-      - deploy-adsp-uc1
-      - test-adsp-uc1
+      - deploy-adsp-uc3
+      - test-adsp-uc3
 
 permissions:
   contents: read
@@ -99,7 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_GCP="$GITHUB_WORKSPACE/config/uc1/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
 
           jq -s '.[0] * .[1] | {
             gcp_project_id,
@@ -130,17 +130,17 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/infra"
+            -backend-config="prefix=state/uc3/infra"
 
       - name: Terraform Validate
         run: terraform validate -no-color
 
       - name: Terraform Plan
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
         run: terraform plan -no-color -input=false -var-file=/tmp/infra.tfvars.json
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/infra.tfvars.json
 
   terraform_compute:
@@ -162,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_GCP="$GITHUB_WORKSPACE/config/uc1/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
 
           jq -s '.[0] * .[1] | {
             gcp_project_id,
@@ -170,17 +170,29 @@ jobs:
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/uc1/infra",
+            infra_state_prefix: "state/uc3/infra",
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
-            machine_type: (.compute.machine_type // "e2-micro"),
-            boot_disk_gb: (.compute.boot_disk_gb // 10),
-            assign_public_ip: (.compute.assign_public_ip // true),
+            machine_type: (.compute.machine_type // "e2-medium"),
+            boot_disk_gb: (.compute.boot_disk_gb // 20),
+            assign_public_ip: (.compute.assign_public_ip // false),
             enable_oslogin: (.compute.enable_oslogin // false),
             install_docker_compose: (.compute.install_docker_compose // true),
-            vm_create_crapi: (.compute.vm_create_crapi // false),
-            vm_create_juice_shop: (.compute.vm_create_juice_shop // false)
+
+            vm_create_comfy_capybara: (.compute.vm_create_comfy_capybara // false),
+            vm_create_asle: (.compute.vm_create_asle // false),
+            comfy_compose_artifact: (.compute.comfy_compose_artifact // "ghcr.io/knowbase/comfy-capybara-compose"),
+            comfy_compose_tag: (.compute.comfy_compose_tag // "0.3.0"),
+            asle_tarball_gcs_uri: (.compute.asle_tarball_gcs_uri // ""),
+            asle_image_ref: (.compute.asle_image_ref // ""),
+            asle_management_port: (.compute.asle_management_port // 8000),
+            asle_telemetry_port: (.compute.asle_telemetry_port // 0),
+            asle_config_bundle_gcs_uri: ("gs://" + "'"${TF_STATE_BUCKET}"'" + "/artifacts/uc3/asle/bundle.json"),
+            asle_poller_image: (.compute.asle_poller_image // "google/cloud-sdk:slim"),
+            asle_poller_interval_seconds: (.compute.asle_poller_interval_seconds // 30),
+            asle_machine_type: (.compute.asle_machine_type // "e2-custom-2-4096"),
+            asle_boot_disk_gb: (.compute.asle_boot_disk_gb // 30)
           }' "$COMMON" "$UC_GCP" > /tmp/compute.tfvars.json
 
       - name: Resolve SSH public key for compute
@@ -193,7 +205,6 @@ jobs:
 
           if [[ -n "${SSH_PUB:-}" ]]; then
             echo "Using SSH_PUB secret for compute SSH access"
-            # normalize: remove CR, ensure trailing newline
             printf '%s\n' "$SSH_PUB" | sed 's/\r$//' > /tmp/ssh_pub
             chmod 600 /tmp/ssh_pub
           elif [[ -f "$COMMITTED_KEY" ]]; then
@@ -228,23 +239,94 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/compute"
+            -backend-config="prefix=state/uc3/compute"
 
       - name: Terraform Validate
         run: terraform validate -no-color
 
       - name: Terraform Plan
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
         run: terraform plan -no-color -input=false -var-file=/tmp/compute.tfvars.json
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/compute.tfvars.json
+
+  terraform_bigip_config:
+    name: "Terraform: BIG-IP Config"
+    runs-on: ubuntu-latest
+    needs: [bootstrap_state_bucket, terraform_compute, terraform_bigip_base]
+    defaults:
+      run:
+        working-directory: ./f5/bigip-config/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/bigip-config.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+
+            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc3/infra",
+            compute_state_prefix: "state/uc3/compute",
+            bigip_base_state_prefix: "state/uc3/bigip-base",
+
+            backend_compute: (.bigip_config.backend_compute // true),
+            backend_bigip_base: (.bigip_config.backend_bigip_base // true),
+
+            awaf_config_payload: (.bigip_config.awaf_config_payload // "../config/uc3-config.json.tftpl"),
+            app_server_ip: (.bigip_config.app_server_ip // ""),
+            app_server_port: (.bigip_config.app_server_port // 8080),
+            api_server_port: (.bigip_config.api_server_port // 8000),
+            asle_telemetry_port: (.compute.asle_telemetry_port // 0),
+            self_signed_cert_cn: (.bigip_config.self_signed_cert_cn // "bigip-front-door"),
+
+            as3_gcs_path: "artifacts/uc3/as3/uc3-declaration.json"
+          }' "$COMMON" "$UC_GCP" > /tmp/bigip-config.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc3/bigip-config"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
+        run: terraform plan -no-color -input=false -var-file=/tmp/bigip-config.tfvars.json
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/bigip-config.tfvars.json
 
   terraform_bigip_base:
     name: "Terraform: BIG-IP Base"
     runs-on: ubuntu-latest
-    needs: [bootstrap_state_bucket, terraform_bigip_config]
+    needs: [bootstrap_state_bucket, terraform_infra]
     defaults:
       run:
         working-directory: ./f5/bigip-base/gcp
@@ -260,16 +342,18 @@ jobs:
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_GCP="$GITHUB_WORKSPACE/config/uc1/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
 
-          jq -s '.[0] * .[1] | {
+          AS3_GCS_URI="gs://${TF_STATE_BUCKET}/artifacts/uc3/as3/uc3-declaration.json"
+
+          jq -s --arg as3_uri "$AS3_GCS_URI" '.[0] * .[1] | {
             gcp_project_id,
             gcp_region,
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/uc1/infra",
-            bigip_config_state_prefix: "state/uc1/bigip-config",
+            infra_state_prefix: "state/uc3/infra",
+            as3_gcs_uri: $as3_uri,
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
@@ -323,26 +407,26 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/bigip-base"
+            -backend-config="prefix=state/uc3/bigip-base"
 
       - name: Terraform Validate
         run: terraform validate -no-color
 
       - name: Terraform Plan
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
         run: terraform plan -no-color -input=false -var-file=/tmp/bigip-base.tfvars.json
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/bigip-base.tfvars.json
 
-  terraform_bigip_config:
-    name: "Terraform: BIG-IP Config"
+  terraform_asle_config:
+    name: "Terraform: ASLE Config"
     runs-on: ubuntu-latest
-    needs: [bootstrap_state_bucket, terraform_compute]
+    needs: [bootstrap_state_bucket, terraform_bigip_base]
     defaults:
       run:
-        working-directory: ./f5/bigip-config/gcp
+        working-directory: ./f5/asle-config/gcp
     env:
       TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
 
@@ -350,154 +434,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Write /tmp/bigip-config.tfvars.json
+      - name: Write /tmp/asle-config.tfvars.json
         shell: bash
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_GCP="$GITHUB_WORKSPACE/config/uc1/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
 
           jq -s '.[0] * .[1] | {
             gcp_project_id,
             gcp_region,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/uc1/infra",
-            compute_state_prefix: "state/uc1/compute",
+            infra_state_prefix: "state/uc3/infra",
+            bigip_base_state_prefix: "state/uc3/bigip-base",
 
-            backend_compute: (.bigip_config.backend_compute // false),
-            awaf_config_payload: (.bigip_config.awaf_config_payload // "../config/uc1-config.json"),
-            app_server_ip: (.bigip_config.app_server_ip // ""),
-            as3_gcs_path: "artifacts/uc1/as3/awaf-declaration.json"
-          }' "$COMMON" "$UC_GCP" > /tmp/bigip-config.tfvars.json
+            bundle_gcs_path: "artifacts/uc3/asle/bundle.json",
 
-      - name: Auth to Google Cloud (WIF)
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-
-      - name: Terraform Init (GCS backend)
-        shell: bash
-        run: |
-          set -euo pipefail
-          terraform init \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/bigip-config"
-
-      - name: Terraform Validate
-        run: terraform validate -no-color
-
-      - name: Terraform Plan
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
-        run: terraform plan -no-color -input=false -var-file=/tmp/bigip-config.tfvars.json
-
-      - name: Terraform Apply
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
-        run: terraform apply -auto-approve -input=false -var-file=/tmp/bigip-config.tfvars.json
-
-  terraform_xc:
-    name: "Terraform: F5 XC"
-    runs-on: ubuntu-latest
-    needs: [bootstrap_state_bucket, terraform_bigip_base]
-    defaults:
-      run:
-        working-directory: ./f5/xc
-    env:
-      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
-      VES_P12_CONTENT: ${{ secrets.VES_P12_CONTENT }}
-      VES_P12_PASSWORD: ${{ secrets.VES_P12_PASSWORD }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Write /tmp/xc.tfvars.json
-        shell: bash
-        run: |
-          set -euo pipefail
-          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_XC="$GITHUB_WORKSPACE/config/uc1/xc/env.json"
-
-          jq -s '.[0] * .[1] | {
-            gcp_project_id: .gcp_project_id,
-            gcp_region: .gcp_region,
-
-            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/uc1/infra",
-            bigip_state_prefix: "state/uc1/bigip-base",
-
-            xc_tenant: .xc_base.xc_tenant,
-            api_url: .xc_base.api_url,
-            xc_namespace: .xc_base.xc_namespace,
-            app_domain: .xc_base.app_domain,
-
-            origin_server: (.xc_base.origin_server // ""),
-            origin_port: ( .xc_base.origin_port | tostring ),
-
-            backend_bigip: (.xc_base.backend_bigip // true),
-
-            xc_waf_blocking: (.xc_base.xc_waf_blocking // false),
-
-            xc_app_type: (.xc_base.xc_app_type // []),
-            xc_multi_lb: (.xc_base.xc_multi_lb // false),
-
-            xc_byo_cert: (.xc_base.xc_byo_cert // false),
-            xc_byo_cert_name: (.xc_base.xc_byo_cert_name // ""),
-            xc_byo_cert_namespace: (.xc_base.xc_byo_cert_namespace // "shared"),
-
-            xc_api_disc: (.xc_features.xc_api_disc // false),
-            xc_api_pro: (.xc_features.xc_api_pro // false),
-            xc_api_spec: (.xc_features.xc_api_spec // null),
-            xc_api_val: (.xc_features.xc_api_val // false),
-            xc_api_val_all: (.xc_features.xc_api_val_all // false),
-            xc_api_val_active: (.xc_features.xc_api_val_active // false),
-            xc_resp_val_active: (.xc_features.xc_resp_val_active // false),
-            xc_api_val_custom: (.xc_features.xc_api_val_custom // false),
-
-            enforcement_block: (.xc_features.enforcement_block // false),
-            enforcement_report: (.xc_features.enforcement_report // false),
-            fall_through_mode_allow: (.xc_features.fall_through_mode_allow // false),
-
-            xc_jwt_val: (.xc_features.xc_jwt_val // false),
-            jwt_val_block: (.xc_features.jwt_val_block // false),
-            jwt_val_report: (.xc_features.jwt_val_report // false),
-            jwks: (.xc_features.jwks // "app_domain"),
-            iss_claim: (.xc_features.iss_claim // false),
-            aud_claim: (.xc_features.aud_claim // [""]),
-            exp_claim: (.xc_features.exp_claim // false),
-
-            xc_bot_def: (.xc_features.xc_bot_def // false),
-            xc_bot_def_advanced: (.xc_features.xc_bot_def_advanced // false),
-            xc_bot_def_advanced_web_policy_name: (.xc_features.xc_bot_def_advanced_web_policy_name // ""),
-            xc_bot_def_advanced_web_policy_namespace: (.xc_features.xc_bot_def_advanced_web_policy_namespace // "shared"),
-            xc_ddos_pro: (.xc_features.xc_ddos_pro // false),
-            xc_l7_ddos_rps_threshold: (.xc_features.xc_l7_ddos_rps_threshold // 100),
-            xc_slow_ddos: (.xc_features.xc_slow_ddos // false),
-            xc_slow_ddos_request_headers_timeout: (.xc_features.xc_slow_ddos_request_headers_timeout // 10),
-            xc_slow_ddos_request_timeout: (.xc_features.xc_slow_ddos_request_timeout // 60),
-            xc_ip_reputation: (.xc_features.xc_ip_reputation // false),
-            xc_ip_threat_categories: (.xc_features.xc_ip_threat_categories // ["SPAM_SOURCES","WINDOWS_EXPLOITS","WEB_ATTACKS","BOTNETS","SCANNERS","DOS_ATTACKS","PHISHING","PROXY","TOR_PROXY"]),
-            xc_threat_mesh: (.xc_features.xc_threat_mesh // false),
-            xc_api_rate_limit: (.xc_features.xc_api_rate_limit // false),
-            xc_api_rate_limit_threshold: (.xc_features.xc_api_rate_limit_threshold // 100),
-            xc_api_rate_limit_unit: (.xc_features.xc_api_rate_limit_unit // "MINUTE"),
-            xc_api_rate_limit_base_path: (.xc_features.xc_api_rate_limit_base_path // "/"),
-            xc_mud: (.xc_features.xc_mud // false),
-            xc_data_guard: (.xc_features.xc_data_guard // false),
-
-            xc_api_crawler: (.xc_features.xc_api_crawler // false),
-            xc_api_auth_discovery: (.xc_features.xc_api_auth_discovery // false),
-            xc_client_side_defense: (.xc_features.xc_client_side_defense // false),
-            xc_waf_exclusion: (.xc_features.xc_waf_exclusion // false),
-            xc_waf_exclusion_policy_name: (.xc_features.xc_waf_exclusion_policy_name // ""),
-            xc_waf_exclusion_policy_namespace: (.xc_features.xc_waf_exclusion_policy_namespace // "shared"),
-            xc_sensitive_data_policy: (.xc_features.xc_sensitive_data_policy // false),
-            xc_sensitive_data_compliances: (.xc_features.xc_sensitive_data_compliances // [])
-          }' "$COMMON" "$UC_XC" > /tmp/xc.tfvars.json
+            bigip_onboard_name: (.asle_config.bigip_onboard_name // "uc3-bigip"),
+            bigip_onboard_port: (.asle_config.bigip_onboard_port // "443"),
+            bigip_onboard_user: (.asle_config.bigip_onboard_user // "admin")
+          }' "$COMMON" "$UC_GCP" > /tmp/asle-config.tfvars.json
 
       - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v3
@@ -514,15 +471,15 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/xc"
+            -backend-config="prefix=state/uc3/asle-config"
 
       - name: Terraform Validate
         run: terraform validate -no-color
 
       - name: Terraform Plan
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
-        run: terraform plan -no-color -input=false -var-file=/tmp/xc.tfvars.json
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
+        run: terraform plan -no-color -input=false -var-file=/tmp/asle-config.tfvars.json
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/deploy-adsp-uc1'
-        run: terraform apply -auto-approve -input=false -var-file=/tmp/xc.tfvars.json
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/asle-config.tfvars.json

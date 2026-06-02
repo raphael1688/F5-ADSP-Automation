@@ -36,6 +36,48 @@ variable "backend_compute" {
   default     = false
 }
 
+variable "bigip_base_state_prefix" {
+  type        = string
+  description = "GCS prefix where bigip-base state is stored."
+  default     = "state/uc3/bigip-base"
+}
+
+variable "backend_bigip_base" {
+  type        = bool
+  description = "Whether to reference bigip-base remote state."
+  default     = false
+}
+
+variable "app_server_port" {
+  type        = number
+  description = "Backend application service port."
+  default     = 80
+}
+
+variable "api_server_port" {
+  type        = number
+  description = "API service port for path-routed traffic (/docs, /openapi.json, /redoc)."
+  default     = 8000
+}
+
+variable "asle_telemetry_port" {
+  type        = number
+  description = "Port the ASLE telemetry collector listens on."
+  default     = 0
+}
+
+variable "self_signed_cert_cn" {
+  type        = string
+  description = "Common Name for the self-signed front-door TLS certificate."
+  default     = "bigip-front-door"
+}
+
+variable "self_signed_cert_validity_hours" {
+  type        = number
+  description = "Validity period of the self-signed cert in hours."
+  default     = 8760
+}
+
 #BIG-IP
 variable "f5_username" {
   type        = string
@@ -46,8 +88,8 @@ variable "f5_username" {
 #AWAF Config
 variable "awaf_config_payload" {
   type        = string
-  description = "AWAF Policy AS3 payload file."
-  default     = "../config/awaf-config.json"
+  description = "AS3 payload template file (relative to the module)."
+  default     = "../config/uc1-config.json"
 }
 
 #App Server

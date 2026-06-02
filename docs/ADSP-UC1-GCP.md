@@ -145,7 +145,7 @@ crafty-corgi/
 │   │   └── outputs.tf
 │   ├── bigip-config/gcp/             # BIG-IP AS3 config
 │   │   ├── bigip-config.tf
-│   │   └── config/awaf-config.json
+│   │   └── config/uc1-config.json
 │   └── xc/                          # F5 Distributed Cloud
 │       ├── main.tf
 │       ├── namespace.tf

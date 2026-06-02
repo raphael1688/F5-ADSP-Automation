@@ -16,3 +16,10 @@ provider "helm" {
     token                  = data.google_client_config.current.access_token
   }
 }
+
+provider "kubectl" {
+  host                   = local.cluster_host
+  cluster_ca_certificate = base64decode(local.cluster_ca_certificate)
+  token                  = data.google_client_config.current.access_token
+  load_config_file       = false
+}

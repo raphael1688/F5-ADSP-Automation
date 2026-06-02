@@ -1,7 +1,8 @@
 locals {
   infra = data.terraform_remote_state.infra.outputs
-  bigip_config = data.terraform_remote_state.bigip_config.outputs
-  as3_gcs_uri  = local.bigip_config.as3_gcs_uri
+
+  # Prefer the directly-supplied URI; fall back to bigip-config remote state for UC1's existing flow.
+  as3_gcs_uri = var.as3_gcs_uri != "" ? var.as3_gcs_uri : data.terraform_remote_state.bigip_config[0].outputs.as3_gcs_uri
 
   project_prefix = local.infra.project_prefix
   resource_owner = local.infra.resource_owner

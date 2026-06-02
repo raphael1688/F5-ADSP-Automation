@@ -14,8 +14,8 @@ output "release_name" {
 }
 
 output "virtualserver_name" {
-  value       = "${helm_release.comfy_capybara.name}-${var.chart_name}"
-  description = "Name of the VirtualServer resource emitted by the chart."
+  value       = local.release_name
+  description = "Name of the VirtualServer resource managed by this module."
 }
 
 output "nic_external_ip" {

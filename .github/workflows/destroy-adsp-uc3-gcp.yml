@@ -1,9 +1,9 @@
-name: "Destroy GCP ADSP Use-Case 1"
+name: "Destroy GCP ADSP Use-Case 3"
 
 on:
   push:
     branches:
-      - destroy-adsp-uc1
+      - destroy-adsp-uc3
 
 permissions:
   contents: read
@@ -61,137 +61,13 @@ jobs:
           fi
 
   #--------------------------------------------------------------
-  # Destroy order: XC → BIG-IP Base → Compute → Infra → Bucket
+  # Destroy order: (BIG-IP Base || Compute) → Infra → Bucket
   #--------------------------------------------------------------
-  terraform_xc_destroy:
-    name: "Destroy: F5 XC"
-    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
-    runs-on: ubuntu-latest
-    needs: precheck_state_bucket
-    defaults:
-      run:
-        working-directory: ./f5/xc
-    env:
-      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
-      VES_P12_CONTENT: ${{ secrets.VES_P12_CONTENT }}
-      VES_P12_PASSWORD: ${{ secrets.VES_P12_PASSWORD }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Write /tmp/xc.tfvars.json
-        shell: bash
-        run: |
-          set -euo pipefail
-          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_XC="$GITHUB_WORKSPACE/config/uc1/xc/env.json"
-
-          jq -s '.[0] * .[1] | {
-            gcp_project_id: .gcp_project_id,
-            gcp_region: .gcp_region,
-
-            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/uc1/infra",
-            bigip_state_prefix: "state/uc1/bigip-base",
-
-            xc_tenant: .xc_base.xc_tenant,
-            api_url: .xc_base.api_url,
-            xc_namespace: .xc_base.xc_namespace,
-            app_domain: .xc_base.app_domain,
-
-            origin_server: (.xc_base.origin_server // ""),
-            origin_port: ( .xc_base.origin_port | tostring ),
-
-            backend_bigip: (.xc_base.backend_bigip // true),
-
-            xc_waf_blocking: (.xc_base.xc_waf_blocking // false),
-
-            xc_app_type: (.xc_base.xc_app_type // []),
-            xc_multi_lb: (.xc_base.xc_multi_lb // false),
-
-            xc_byo_cert: (.xc_base.xc_byo_cert // false),
-            xc_byo_cert_name: (.xc_base.xc_byo_cert_name // ""),
-            xc_byo_cert_namespace: (.xc_base.xc_byo_cert_namespace // "shared"),
-
-            xc_api_disc: (.xc_features.xc_api_disc // false),
-            xc_api_pro: (.xc_features.xc_api_pro // false),
-            xc_api_spec: (.xc_features.xc_api_spec // null),
-            xc_api_val: (.xc_features.xc_api_val // false),
-            xc_api_val_all: (.xc_features.xc_api_val_all // false),
-            xc_api_val_active: (.xc_features.xc_api_val_active // false),
-            xc_resp_val_active: (.xc_features.xc_resp_val_active // false),
-            xc_api_val_custom: (.xc_features.xc_api_val_custom // false),
-
-            enforcement_block: (.xc_features.enforcement_block // false),
-            enforcement_report: (.xc_features.enforcement_report // false),
-            fall_through_mode_allow: (.xc_features.fall_through_mode_allow // false),
-
-            xc_jwt_val: (.xc_features.xc_jwt_val // false),
-            jwt_val_block: (.xc_features.jwt_val_block // false),
-            jwt_val_report: (.xc_features.jwt_val_report // false),
-            jwks: (.xc_features.jwks // "app_domain"),
-            iss_claim: (.xc_features.iss_claim // false),
-            aud_claim: (.xc_features.aud_claim // [""]),
-            exp_claim: (.xc_features.exp_claim // false),
-
-            xc_bot_def: (.xc_features.xc_bot_def // false),
-            xc_bot_def_advanced: (.xc_features.xc_bot_def_advanced // false),
-            xc_bot_def_advanced_web_policy_name: (.xc_features.xc_bot_def_advanced_web_policy_name // ""),
-            xc_bot_def_advanced_web_policy_namespace: (.xc_features.xc_bot_def_advanced_web_policy_namespace // "shared"),
-            xc_ddos_pro: (.xc_features.xc_ddos_pro // false),
-            xc_l7_ddos_rps_threshold: (.xc_features.xc_l7_ddos_rps_threshold // 100),
-            xc_slow_ddos: (.xc_features.xc_slow_ddos // false),
-            xc_slow_ddos_request_headers_timeout: (.xc_features.xc_slow_ddos_request_headers_timeout // 10),
-            xc_slow_ddos_request_timeout: (.xc_features.xc_slow_ddos_request_timeout // 60),
-            xc_ip_reputation: (.xc_features.xc_ip_reputation // false),
-            xc_ip_threat_categories: (.xc_features.xc_ip_threat_categories // ["SPAM_SOURCES","WINDOWS_EXPLOITS","WEB_ATTACKS","BOTNETS","SCANNERS","DOS_ATTACKS","PHISHING","PROXY","TOR_PROXY"]),
-            xc_threat_mesh: (.xc_features.xc_threat_mesh // false),
-            xc_api_rate_limit: (.xc_features.xc_api_rate_limit // false),
-            xc_api_rate_limit_threshold: (.xc_features.xc_api_rate_limit_threshold // 100),
-            xc_api_rate_limit_unit: (.xc_features.xc_api_rate_limit_unit // "MINUTE"),
-            xc_api_rate_limit_base_path: (.xc_features.xc_api_rate_limit_base_path // "/"),
-            xc_mud: (.xc_features.xc_mud // false),
-            xc_data_guard: (.xc_features.xc_data_guard // false),
-
-            xc_api_crawler: (.xc_features.xc_api_crawler // false),
-            xc_api_auth_discovery: (.xc_features.xc_api_auth_discovery // false),
-            xc_client_side_defense: (.xc_features.xc_client_side_defense // false),
-            xc_waf_exclusion: (.xc_features.xc_waf_exclusion // false),
-            xc_waf_exclusion_policy_name: (.xc_features.xc_waf_exclusion_policy_name // ""),
-            xc_waf_exclusion_policy_namespace: (.xc_features.xc_waf_exclusion_policy_namespace // "shared"),
-            xc_sensitive_data_policy: (.xc_features.xc_sensitive_data_policy // false),
-            xc_sensitive_data_compliances: (.xc_features.xc_sensitive_data_compliances // [])
-          }' "$COMMON" "$UC_XC" > /tmp/xc.tfvars.json
-
-      - name: Auth to Google Cloud (WIF)
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-
-      - name: Terraform Init (GCS backend)
-        shell: bash
-        run: |
-          set -euo pipefail
-          terraform init \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/xc"
-
-      - name: Terraform Plan (destroy)
-        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/xc.tfvars.json
-
-      - name: Terraform Destroy
-        run: terraform destroy -auto-approve -input=false -var-file=/tmp/xc.tfvars.json
-
   terraform_bigip_base_destroy:
     name: "Destroy: BIG-IP Base"
     if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
     runs-on: ubuntu-latest
-    needs: [precheck_state_bucket, terraform_xc_destroy]
+    needs: precheck_state_bucket
     defaults:
       run:
         working-directory: ./f5/bigip-base/gcp
@@ -207,16 +83,18 @@ jobs:
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_GCP="$GITHUB_WORKSPACE/config/uc1/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
 
-          jq -s '.[0] * .[1] | {
+          AS3_GCS_URI="gs://${TF_STATE_BUCKET}/artifacts/uc3/as3/uc3-declaration.json"
+
+          jq -s --arg as3_uri "$AS3_GCS_URI" '.[0] * .[1] | {
             gcp_project_id,
             gcp_region,
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/uc1/infra",
-            bigip_config_state_prefix: "state/uc1/bigip-config",
+            infra_state_prefix: "state/uc3/infra",
+            as3_gcs_uri: $as3_uri,
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
@@ -270,7 +148,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/bigip-base"
+            -backend-config="prefix=state/uc3/bigip-base"
 
       - name: Terraform Plan (destroy)
         run: terraform plan -destroy -no-color -input=false -var-file=/tmp/bigip-base.tfvars.json
@@ -282,7 +160,7 @@ jobs:
     name: "Destroy: Compute"
     if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
     runs-on: ubuntu-latest
-    needs: [precheck_state_bucket, terraform_bigip_base_destroy]
+    needs: precheck_state_bucket
     defaults:
       run:
         working-directory: ./compute/gcp
@@ -298,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_GCP="$GITHUB_WORKSPACE/config/uc1/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
 
           jq -s '.[0] * .[1] | {
             gcp_project_id,
@@ -306,18 +184,29 @@ jobs:
             gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
-            infra_state_prefix: "state/uc1/infra",
+            infra_state_prefix: "state/uc3/infra",
 
             gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
 
-            machine_type: (.compute.machine_type // "e2-micro"),
-            boot_disk_gb: (.compute.boot_disk_gb // 10),
-            assign_public_ip: (.compute.assign_public_ip // true),
+            machine_type: (.compute.machine_type // "e2-medium"),
+            boot_disk_gb: (.compute.boot_disk_gb // 20),
+            assign_public_ip: (.compute.assign_public_ip // false),
             enable_oslogin: (.compute.enable_oslogin // false),
             install_docker_compose: (.compute.install_docker_compose // true),
 
-            vm_create_crapi: (.compute.vm_create_crapi // false),
-            vm_create_juice_shop: (.compute.vm_create_juice_shop // false)
+            vm_create_comfy_capybara: (.compute.vm_create_comfy_capybara // false),
+            vm_create_asle: (.compute.vm_create_asle // false),
+            comfy_compose_artifact: (.compute.comfy_compose_artifact // "ghcr.io/knowbase/comfy-capybara-compose"),
+            comfy_compose_tag: (.compute.comfy_compose_tag // "0.3.0"),
+            asle_tarball_gcs_uri: (.compute.asle_tarball_gcs_uri // ""),
+            asle_image_ref: (.compute.asle_image_ref // ""),
+            asle_management_port: (.compute.asle_management_port // 8000),
+            asle_telemetry_port: (.compute.asle_telemetry_port // 0),
+            asle_config_bundle_gcs_uri: ("gs://" + "'"${TF_STATE_BUCKET}"'" + "/artifacts/uc3/asle/bundle.json"),
+            asle_poller_image: (.compute.asle_poller_image // "google/cloud-sdk:slim"),
+            asle_poller_interval_seconds: (.compute.asle_poller_interval_seconds // 30),
+            asle_machine_type: (.compute.asle_machine_type // "e2-custom-2-4096"),
+            asle_boot_disk_gb: (.compute.asle_boot_disk_gb // 30)
           }' "$COMMON" "$UC_GCP" > /tmp/compute.tfvars.json
 
       - name: Auth to Google Cloud (WIF)
@@ -335,7 +224,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/compute"
+            -backend-config="prefix=state/uc3/compute"
 
       - name: Terraform Plan (destroy)
         run: terraform plan -destroy -no-color -input=false -var-file=/tmp/compute.tfvars.json
@@ -347,7 +236,7 @@ jobs:
     name: "Destroy: Infra"
     if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
     runs-on: ubuntu-latest
-    needs: [precheck_state_bucket, terraform_compute_destroy]
+    needs: [precheck_state_bucket, terraform_compute_destroy, terraform_bigip_base_destroy]
     defaults:
       run:
         working-directory: ./infra/gcp
@@ -363,7 +252,7 @@ jobs:
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
-          UC_GCP="$GITHUB_WORKSPACE/config/uc1/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
 
           jq -s '.[0] * .[1] | {
             gcp_project_id,
@@ -393,7 +282,7 @@ jobs:
           set -euo pipefail
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=state/uc1/infra"
+            -backend-config="prefix=state/uc3/infra"
 
       - name: Terraform Plan (destroy)
         run: terraform plan -destroy -no-color -input=false -var-file=/tmp/infra.tfvars.json
@@ -430,7 +319,6 @@ jobs:
             echo "Deleting bucket + all contents: $BUCKET"
             gcloud storage rm -r "$BUCKET" || true
 
-            # In case of timing/parallelism, treat 404 as success
             if gcloud storage buckets describe "$BUCKET" >/dev/null 2>&1; then
               echo "Bucket still exists after rm -r; deleting explicitly."
               gcloud storage buckets delete "$BUCKET" || true
@@ -440,4 +328,3 @@ jobs:
           else
             echo "Bucket not found (already deleted): $BUCKET"
           fi
-

@@ -6,12 +6,7 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 6.0"
     }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
   }
 
-  # Backend configured via -backend-config at init time.
   backend "gcs" {}
 }

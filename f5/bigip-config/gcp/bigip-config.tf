@@ -8,7 +8,6 @@ resource "google_storage_bucket_object" "as3_declaration" {
   bucket  = local.as3_gcs_bucket
   content = local.as3_declaration
 
-  # Ensure declaration is updated on changes
-  detect_md5hash = true
+  source_md5hash = md5(local.as3_declaration)
 }
 

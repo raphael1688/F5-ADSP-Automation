@@ -14,8 +14,14 @@ variable "infra_state_prefix" {
 
 variable "bigip_config_state_prefix" {
   type        = string
-  description = "GCS prefix where bigip-config state is stored (for reading as3_gcs_uri output)"
+  description = "GCS prefix where bigip-config state is stored. Read only when as3_gcs_uri is empty."
   default     = "state/uc1/bigip-config"
+}
+
+variable "as3_gcs_uri" {
+  type        = string
+  description = "Fully qualified gs:// URI of the AS3 declaration the BIG-IP polls on boot."
+  default     = ""
 }
 
 # GCP

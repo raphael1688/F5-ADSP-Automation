@@ -97,3 +97,93 @@ variable "vm_create_juice_shop" {
   type        = bool
   default     = false
 }
+
+variable "vm_create_comfy_capybara" {
+  description = "Provision the comfy-capybara docker host."
+  type        = bool
+  default     = false
+}
+
+variable "vm_create_asle" {
+  description = "Provision the ASLE docker host."
+  type        = bool
+  default     = false
+}
+
+variable "comfy_compose_artifact" {
+  description = "OCI artifact reference for the comfy-capybara compose."
+  type        = string
+  default     = "ghcr.io/knowbase/comfy-capybara-compose"
+}
+
+variable "comfy_compose_tag" {
+  description = "Tag of the comfy-capybara compose artifact."
+  type        = string
+  default     = "0.3.0"
+}
+
+variable "oras_image" {
+  description = "Docker image for the ORAS CLI."
+  type        = string
+  default     = "ghcr.io/oras-project/oras:v1.2.0"
+}
+
+variable "docker_compose_plugin_url" {
+  description = "URL of the docker compose v2 plugin binary."
+  type        = string
+  default     = "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64"
+}
+
+variable "asle_tarball_gcs_uri" {
+  description = "Fully qualified gs:// URI to the ASLE image tarball."
+  type        = string
+  default     = ""
+}
+
+variable "asle_image_ref" {
+  description = "Image reference (repository:tag) that docker load materializes from the tarball."
+  type        = string
+  default     = ""
+}
+
+variable "asle_management_port" {
+  description = "Port the ASLE management UI listens on."
+  type        = number
+  default     = 8000
+}
+
+variable "asle_telemetry_port" {
+  description = "Port the ASLE telemetry collector listens on."
+  type        = number
+  default     = 0
+}
+
+variable "asle_machine_type" {
+  description = "GCE machine type for the ASLE docker host."
+  type        = string
+  default     = "e2-custom-2-4096"
+}
+
+variable "asle_boot_disk_gb" {
+  description = "Boot disk size (GB) for the ASLE docker host."
+  type        = number
+  default     = 30
+}
+
+variable "asle_config_bundle_gcs_uri" {
+  description = "gs:// URI of the ASLE config bundle the on-VM poller watches. Empty disables the poller."
+  type        = string
+  default     = ""
+}
+
+variable "asle_poller_image" {
+  description = "Docker image used by the on-VM poller."
+  type        = string
+  default     = "google/cloud-sdk:slim"
+}
+
+variable "asle_poller_interval_seconds" {
+  description = "Seconds between poll cycles."
+  type        = number
+  default     = 30
+}
