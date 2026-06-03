@@ -81,3 +81,9 @@ variable "node_disk_type" {
   default     = "pd-balanced"
   description = "Boot disk type per node."
 }
+
+variable "node_service_account" {
+  type        = string
+  description = "Service account email attached to GKE nodes. If empty, GKE falls back to the project's default Compute Engine SA."
+  default     = ""
+}

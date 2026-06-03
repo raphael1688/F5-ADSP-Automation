@@ -180,6 +180,7 @@ jobs:
             node_count:                       (.k8s.node_count // 2),
             node_disk_size_gb:                (.k8s.node_disk_size_gb // 50),
             node_disk_type:                   (.k8s.node_disk_type // "pd-balanced"),
+            node_service_account:             (.k8s.gcp_runtime_service_account_email // ""),
             master_ipv4_cidr_block:           (.k8s.master_ipv4_cidr_block // "172.16.0.0/28"),
             master_authorized_networks_extra: (.k8s.master_authorized_networks_extra // [])
           }' "$COMMON" "$UC_GCP" > /tmp/k8s.tfvars.json
@@ -401,8 +402,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Encode OAS spec
+        id: oas
+        shell: bash
+        run: |
+          set -euo pipefail
+          OAS_DIR="$GITHUB_WORKSPACE/config/uc2/app/oas"
+          OAS_FILE=""
+          for candidate in "$OAS_DIR/openapi.json" "$OAS_DIR/openapi.yaml" "$OAS_DIR/openapi.yml"; do
+            if [ -f "$candidate" ]; then
+              OAS_FILE="$candidate"
+              break
+            fi
+          done
+          if [ -z "$OAS_FILE" ]; then
+            echo "No OAS spec found at $OAS_DIR/openapi.{json,yaml,yml}." >&2
+            echo "Drop the OpenAPI spec for the app at one of those paths and re-run." >&2
+            exit 1
+          fi
+          OAS_B64=$(base64 -w 0 "$OAS_FILE")
+          echo "::add-mask::$OAS_B64"
+          echo "oas_b64=$OAS_B64" >> "$GITHUB_OUTPUT"
+          echo "Using OAS: $OAS_FILE ($(wc -c <"$OAS_FILE") bytes)"
+
       - name: Write /tmp/xc.tfvars.json
         shell: bash
+        env:
+          XC_OAS_CONTENT: ${{ steps.oas.outputs.oas_b64 }}
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
@@ -438,7 +464,7 @@ jobs:
 
             xc_api_disc: (.xc_features.xc_api_disc // false),
             xc_api_pro: (.xc_features.xc_api_pro // false),
-            xc_api_spec: (.xc_features.xc_api_spec // null),
+            xc_oas_content: env.XC_OAS_CONTENT,
             xc_api_val: (.xc_features.xc_api_val // false),
             xc_api_val_all: (.xc_features.xc_api_val_all // false),
             xc_api_val_active: (.xc_features.xc_api_val_active // false),
@@ -448,6 +474,7 @@ jobs:
             enforcement_block: (.xc_features.enforcement_block // false),
             enforcement_report: (.xc_features.enforcement_report // false),
             fall_through_mode_allow: (.xc_features.fall_through_mode_allow // false),
+            fall_through_mode_report: (.xc_features.fall_through_mode_report // false),
 
             xc_jwt_val: (.xc_features.xc_jwt_val // false),
             jwt_val_block: (.xc_features.jwt_val_block // false),

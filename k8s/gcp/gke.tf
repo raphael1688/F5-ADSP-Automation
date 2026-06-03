@@ -58,6 +58,8 @@ resource "google_container_node_pool" "primary" {
     disk_size_gb = var.node_disk_size_gb
     disk_type    = var.node_disk_type
 
+    service_account = var.node_service_account != "" ? var.node_service_account : null
+
     tags = [local.tag_nic_ext]
 
     oauth_scopes = [

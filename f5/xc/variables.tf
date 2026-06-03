@@ -128,7 +128,7 @@ variable "xc_api_pro" {
 
 variable "xc_api_spec" {
   type        = list(any)
-  description = "XC object store path to swagger spec ex: https://my.tenant.domain/api/object_store/namespaces/my-ns/stored_objects/swagger/file-name/v1-22-01-12"
+  description = "Pre-uploaded XC object store path(s) to a swagger spec. Leave null when xc_oas_content is used."
   default     = null
 }
 
@@ -182,6 +182,19 @@ variable "fall_through_mode_allow" {
   type        = bool
   description = "Enable fall through mode allow"
   default     = false
+}
+
+variable "fall_through_mode_report" {
+  type        = bool
+  description = "When fall_through_mode_allow is false, emit a single action_report rule for unknown paths instead of action_block."
+  default     = false
+}
+
+variable "xc_oas_content" {
+  type        = string
+  description = "Base64-encoded OpenAPI spec body. When set, the api_definition is built from it via the volterra string:/// inline form. Pairs with xc_api_pro."
+  default     = ""
+  sensitive   = false
 }
 
 variable "xc_api_val_custom" {

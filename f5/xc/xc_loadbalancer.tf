@@ -207,16 +207,10 @@ resource "volterra_http_loadbalancer" "lb_https" {
               content {
                 open_api_validation_rules {
                   metadata {
-                    name = format("%s-apip-fall-through-block-%s", local.project_prefix, local.build_suffix)
+                    name = format("%s-apip-fall-through-%s", local.project_prefix, local.build_suffix)
                   }
-                  action_block = true
-                  base_path    = "/"
-                }
-                open_api_validation_rules {
-                  metadata {
-                    name = format("%s-apip-fall-through-report-%s", local.project_prefix, local.build_suffix)
-                  }
-                  action_report = true
+                  action_report = var.fall_through_mode_report
+                  action_block  = !var.fall_through_mode_report
                   base_path     = "/"
                 }
               }
@@ -274,16 +268,10 @@ resource "volterra_http_loadbalancer" "lb_https" {
               content {
                 open_api_validation_rules {
                   metadata {
-                    name = format("%s-apip-fall-through-block-%s", local.project_prefix, local.build_suffix)
+                    name = format("%s-apip-fall-through-%s", local.project_prefix, local.build_suffix)
                   }
-                  action_block = true
-                  base_path    = "/"
-                }
-                open_api_validation_rules {
-                  metadata {
-                    name = format("%s-apip-fall-through-report-%s", local.project_prefix, local.build_suffix)
-                  }
-                  action_report = true
+                  action_report = var.fall_through_mode_report
+                  action_block  = !var.fall_through_mode_report
                   base_path     = "/"
                 }
               }
