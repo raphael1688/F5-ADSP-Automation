@@ -223,7 +223,6 @@ jobs:
     env:
       TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
       TF_VAR_nginx_jwt: ${{ secrets.NGINX_JWT }}
-      TF_VAR_compiled_policy_path: /tmp/compiled_policy.tgz
 
     steps:
       - name: Checkout
@@ -291,6 +290,13 @@ jobs:
             -p /policy/policy.json -o /output/compiled_policy.tgz
           sudo chmod 644 "$OUT_DIR/compiled_policy.tgz"
           ls -lh "$OUT_DIR/compiled_policy.tgz"
+
+      - name: Upload compiled NAP bundle to GCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          gsutil cp /tmp/compiled_policy.tgz \
+            "gs://${TF_STATE_BUCKET}/artifacts/uc2/nap/compiled_policy.tgz"
 
       - name: Allow runner IP through GKE control plane authorized networks
         if: github.ref == 'refs/heads/deploy-adsp-uc2'

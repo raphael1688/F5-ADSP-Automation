@@ -92,9 +92,10 @@ variable "nic_crds_url" {
   description = "URL to the upstream NIC CRDs manifest. Must match the chart version."
 }
 
-variable "compiled_policy_path" {
+variable "nap_bundle_subdir" {
   type        = string
-  description = "Path on the runner filesystem to the compiled NAP policy bundle (.tgz). Written by the workflow's WAF compile step."
+  default     = "artifacts/uc2/nap"
+  description = "Subdirectory inside the state bucket where the workflow uploads compiled NAP policy bundles."
 }
 
 variable "waf_policy_name" {

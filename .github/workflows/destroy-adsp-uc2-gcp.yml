@@ -301,7 +301,6 @@ jobs:
     env:
       TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
       TF_VAR_nginx_jwt: ${{ secrets.NGINX_JWT }}
-      TF_VAR_compiled_policy_path: /tmp/compiled_policy.tgz
 
     steps:
       - name: Checkout
@@ -333,15 +332,6 @@ jobs:
             nic_crds_url:         (.nic.nic_crds_url         // "https://raw.githubusercontent.com/nginx/kubernetes-ingress/v4.0.1/deploy/crds.yaml"),
             waf_policy_name:      (.nic.waf_policy_name      // "waf-policy")
           }' "$COMMON" "$UC_GCP" > /tmp/nic.tfvars.json
-
-      - name: Stage compiled policy placeholder
-        shell: bash
-        run: |
-          set -euo pipefail
-          # filebase64() is evaluated at plan time even on destroy. Stage a small
-          # placeholder so the variable resolves; the bundle's contents are not
-          # used during destroy.
-          printf 'destroy-placeholder' > /tmp/compiled_policy.tgz
 
       - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v3

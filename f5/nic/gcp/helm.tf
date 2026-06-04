@@ -12,7 +12,7 @@ resource "helm_release" "nginx_ingress" {
   depends_on = [
     kubernetes_secret.nginx_license,
     kubernetes_secret.registry,
-    kubernetes_secret.waf_policy_bundle,
+    google_service_account_iam_member.nap_bundle_reader_wi,
     kubectl_manifest.nic_crds,
   ]
 }

@@ -32,15 +32,3 @@ resource "kubernetes_secret" "registry" {
   }
 }
 
-resource "kubernetes_secret" "waf_policy_bundle" {
-  metadata {
-    name      = local.bundle_secret_name
-    namespace = kubernetes_namespace.nginx_ingress.metadata[0].name
-  }
-
-  type = "Opaque"
-
-  binary_data = {
-    (local.policy_bundle_filename) = filebase64(var.compiled_policy_path)
-  }
-}
