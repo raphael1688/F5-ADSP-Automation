@@ -98,6 +98,11 @@ variable "nap_bundle_subdir" {
   description = "Subdirectory inside the state bucket where the workflow uploads compiled NAP policy bundles."
 }
 
+variable "gcp_runtime_service_account_email" {
+  type        = string
+  description = "Email of the runtime service account NIC pods impersonate via Workload Identity for GCS reads."
+}
+
 variable "waf_policy_name" {
   type        = string
   default     = "waf-policy"

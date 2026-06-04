@@ -10,7 +10,7 @@ locals {
   cluster_ca_certificate = local.k8s.cluster_ca_certificate
 
   release_name = format("%s-nic-%s", local.project_prefix, local.build_suffix)
-  ksa_name     = local.release_name
+  ksa_name     = "nic-nap-bundle-reader"
 
   policy_bundle_filename = "compiled_policy.tgz"
   license_secret_name    = "license-token"
@@ -20,7 +20,7 @@ locals {
     license_secret_name  = local.license_secret_name
     regcred_secret_name  = local.regcred_secret_name
     ksa_name             = local.ksa_name
-    gsa_email            = google_service_account.nap_bundle_reader.email
+    gsa_email            = var.gcp_runtime_service_account_email
     nap_bundle_bucket    = var.tf_state_bucket
     nap_bundle_subdir    = var.nap_bundle_subdir
     nic_image_repository = var.nic_image_repository

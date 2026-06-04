@@ -321,6 +321,8 @@ jobs:
             infra_state_prefix: "state/uc2/infra",
             k8s_state_prefix:   "state/uc2/k8s",
 
+            gcp_runtime_service_account_email: .k8s.gcp_runtime_service_account_email,
+
             namespace:            (.nic.namespace            // "nginx-ingress"),
             chart_version:        (.nic.chart_version        // "2.0.1"),
             nic_image_repository: (.nic.nic_image_repository // "private-registry.nginx.com/nginx-ic-nap-v5/nginx-plus-ingress"),
