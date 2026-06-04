@@ -153,7 +153,6 @@ jobs:
         working-directory: ./k8s/gcp
     env:
       TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
-      TF_VAR_node_service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout
@@ -181,6 +180,7 @@ jobs:
             node_count:                       (.k8s.node_count // 2),
             node_disk_size_gb:                (.k8s.node_disk_size_gb // 50),
             node_disk_type:                   (.k8s.node_disk_type // "pd-balanced"),
+            node_service_account:             (.k8s.gcp_runtime_service_account_email // ""),
             master_ipv4_cidr_block:           (.k8s.master_ipv4_cidr_block // "172.16.0.0/28"),
             master_authorized_networks_extra: (.k8s.master_authorized_networks_extra // [])
           }' "$COMMON" "$UC_GCP" > /tmp/k8s.tfvars.json
