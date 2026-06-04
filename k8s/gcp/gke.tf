@@ -6,6 +6,10 @@ resource "google_container_cluster" "primary" {
   initial_node_count       = 1
   deletion_protection      = false
 
+  node_config {
+    service_account = var.node_service_account != "" ? var.node_service_account : null
+  }
+
   network    = local.network_name
   subnetwork = local.k8s_subnet_name
 
