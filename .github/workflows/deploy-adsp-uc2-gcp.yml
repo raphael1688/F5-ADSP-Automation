@@ -292,6 +292,38 @@ jobs:
           sudo chmod 644 "$OUT_DIR/compiled_policy.tgz"
           ls -lh "$OUT_DIR/compiled_policy.tgz"
 
+      - name: Allow runner IP through GKE control plane authorized networks
+        if: github.ref == 'refs/heads/deploy-adsp-uc2'
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc2/gcp/env.json"
+
+          K8S_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc2/k8s/default.tfstate")"
+          CLUSTER_NAME=$(jq -r '.outputs.cluster_name.value' <<<"$K8S_STATE")
+          CLUSTER_LOCATION=$(jq -r '.outputs.cluster_location.value' <<<"$K8S_STATE")
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          RUNNER_IP=$(curl -sf https://ifconfig.me)
+          if [ -z "$RUNNER_IP" ]; then
+            echo "Failed to detect runner egress IP" >&2
+            exit 1
+          fi
+
+          CIDR_LIST=$(jq -rn \
+            --slurpfile common "$COMMON" \
+            --slurpfile uc "$UC_GCP" \
+            --arg runner "${RUNNER_IP}/32" \
+            '($common[0].admin_src_addr // []) + ($uc[0].k8s.master_authorized_networks_extra // []) + [$runner] | unique | join(",")')
+
+          echo "Updating $CLUSTER_NAME authorized networks: $CIDR_LIST"
+          gcloud container clusters update "$CLUSTER_NAME" \
+            --project="$PROJECT_ID" \
+            --location="$CLUSTER_LOCATION" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks "$CIDR_LIST"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
 
@@ -363,6 +395,41 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Allow runner IP through GKE control plane authorized networks
+        if: github.ref == 'refs/heads/deploy-adsp-uc2'
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc2/gcp/env.json"
+
+          K8S_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc2/k8s/default.tfstate")"
+          CLUSTER_NAME=$(jq -r '.outputs.cluster_name.value' <<<"$K8S_STATE")
+          CLUSTER_LOCATION=$(jq -r '.outputs.cluster_location.value' <<<"$K8S_STATE")
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          RUNNER_IP=$(curl -sf https://ifconfig.me)
+          if [ -z "$RUNNER_IP" ]; then
+            echo "Failed to detect runner egress IP" >&2
+            exit 1
+          fi
+
+          CIDR_LIST=$(jq -rn \
+            --slurpfile common "$COMMON" \
+            --slurpfile uc "$UC_GCP" \
+            --arg runner "${RUNNER_IP}/32" \
+            '($common[0].admin_src_addr // []) + ($uc[0].k8s.master_authorized_networks_extra // []) + [$runner] | unique | join(",")')
+
+          echo "Updating $CLUSTER_NAME authorized networks: $CIDR_LIST"
+          gcloud container clusters update "$CLUSTER_NAME" \
+            --project="$PROJECT_ID" \
+            --location="$CLUSTER_LOCATION" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks "$CIDR_LIST"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4

@@ -49,6 +49,10 @@ resource "google_container_cluster" "primary" {
   resource_labels = {
     owner = local.resource_owner
   }
+
+  lifecycle {
+    ignore_changes = [master_authorized_networks_config]
+  }
 }
 
 resource "google_container_node_pool" "primary" {
