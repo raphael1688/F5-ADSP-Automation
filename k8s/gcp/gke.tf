@@ -51,7 +51,10 @@ resource "google_container_cluster" "primary" {
   }
 
   lifecycle {
-    ignore_changes = [master_authorized_networks_config]
+    ignore_changes = [
+      master_authorized_networks_config,
+      node_config,
+    ]
   }
 }
 
