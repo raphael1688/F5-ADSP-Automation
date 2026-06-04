@@ -223,6 +223,7 @@ jobs:
     env:
       TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
       TF_VAR_nginx_jwt: ${{ secrets.NGINX_JWT }}
+      TF_VAR_chart_path: /tmp/charts/nginx-ingress
 
     steps:
       - name: Checkout
@@ -246,7 +247,6 @@ jobs:
             gcp_runtime_service_account_email: .k8s.gcp_runtime_service_account_email,
 
             namespace:            (.nic.namespace            // "nginx-ingress"),
-            chart_version:        (.nic.chart_version        // "2.0.1"),
             nic_image_repository: (.nic.nic_image_repository // "private-registry.nginx.com/nginx-ic-nap-v5/nginx-plus-ingress"),
             nic_image_tag:        (.nic.nic_image_tag        // "4.0.1"),
             nap_enforcer_image:   (.nic.nap_enforcer_image   // "private-registry.nginx.com/nap/waf-enforcer"),
@@ -299,6 +299,25 @@ jobs:
           set -euo pipefail
           gsutil cp /tmp/compiled_policy.tgz \
             "gs://${TF_STATE_BUCKET}/artifacts/uc2/nap/compiled_policy.tgz"
+
+      - name: Setup helm
+        uses: azure/setup-helm@v4
+
+      - name: Vendor NIC chart (drop broken values.schema.json)
+        shell: bash
+        run: |
+          set -euo pipefail
+          UC_GCP="$GITHUB_WORKSPACE/config/uc2/gcp/env.json"
+          CHART_VERSION=$(jq -r '.nic.chart_version // "2.0.1"' "$UC_GCP")
+
+          mkdir -p /tmp/charts
+          helm repo add nginx-stable https://helm.nginx.com/stable
+          helm repo update
+          helm pull nginx-stable/nginx-ingress \
+            --version "$CHART_VERSION" \
+            --untar --untardir /tmp/charts
+          rm -f /tmp/charts/nginx-ingress/values.schema.json
+          echo "Vendored chart at /tmp/charts/nginx-ingress (schema removed)"
 
       - name: Allow runner IP through GKE control plane authorized networks
         if: github.ref == 'refs/heads/deploy-adsp-uc2'

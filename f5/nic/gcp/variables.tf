@@ -44,10 +44,9 @@ variable "nginx_registry" {
   description = "NGINX private registry hostname used by the imagePullSecret."
 }
 
-variable "chart_version" {
+variable "chart_path" {
   type        = string
-  default     = "2.0.1"
-  description = "Version of the helm.nginx.com/stable nginx-ingress chart."
+  description = "Local filesystem path to the vendored nginx-ingress chart directory. Workflow pulls + patches the chart before terraform runs."
 }
 
 variable "nic_image_repository" {
