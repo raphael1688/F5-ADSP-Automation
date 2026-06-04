@@ -10,22 +10,24 @@ locals {
   cluster_ca_certificate = local.k8s.cluster_ca_certificate
 
   release_name = format("%s-nic-%s", local.project_prefix, local.build_suffix)
+  ksa_name     = local.release_name
 
   policy_bundle_filename = "compiled_policy.tgz"
   license_secret_name    = "license-token"
   regcred_secret_name    = "regcred"
-  bundle_secret_name     = "waf-policy-bundle"
 
   chart_values = templatefile("${path.module}/values.yaml.tftpl", {
-    license_secret_name    = local.license_secret_name
-    regcred_secret_name    = local.regcred_secret_name
-    bundle_secret_name     = local.bundle_secret_name
-    policy_bundle_filename = local.policy_bundle_filename
-    nic_image_repository   = var.nic_image_repository
-    nic_image_tag          = var.nic_image_tag
-    nap_enforcer_image     = var.nap_enforcer_image
-    nap_enforcer_tag       = var.nap_enforcer_tag
-    nap_config_mgr_image   = var.nap_config_mgr_image
-    nap_config_mgr_tag     = var.nap_config_mgr_tag
+    license_secret_name  = local.license_secret_name
+    regcred_secret_name  = local.regcred_secret_name
+    ksa_name             = local.ksa_name
+    gsa_email            = google_service_account.nap_bundle_reader.email
+    nap_bundle_bucket    = var.tf_state_bucket
+    nap_bundle_subdir    = var.nap_bundle_subdir
+    nic_image_repository = var.nic_image_repository
+    nic_image_tag        = var.nic_image_tag
+    nap_enforcer_image   = var.nap_enforcer_image
+    nap_enforcer_tag     = var.nap_enforcer_tag
+    nap_config_mgr_image = var.nap_config_mgr_image
+    nap_config_mgr_tag   = var.nap_config_mgr_tag
   })
 }
