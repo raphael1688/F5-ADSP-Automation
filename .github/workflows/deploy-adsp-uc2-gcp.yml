@@ -504,7 +504,7 @@ jobs:
 
           API_URL=$(jq -r .xc_base.api_url "$UC_XC")
           NS=$(jq -r .xc_base.xc_namespace "$UC_XC")
-          NAME="comfy.json"
+          NAME="uc2-app-oas"
 
           OAS_FILE=""
           OAS_FORMAT=""
