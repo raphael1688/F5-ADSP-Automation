@@ -495,33 +495,71 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Encode OAS spec
-        id: oas
+      - name: Upload OAS to XC object store
         shell: bash
         run: |
           set -euo pipefail
+          UC_XC="$GITHUB_WORKSPACE/config/uc2/xc/env.json"
           OAS_DIR="$GITHUB_WORKSPACE/config/uc2/app/oas"
+
+          API_URL=$(jq -r .xc_base.api_url "$UC_XC")
+          NS=$(jq -r .xc_base.xc_namespace "$UC_XC")
+          NAME="comfy.json"
+
           OAS_FILE=""
-          for candidate in "$OAS_DIR/openapi.json" "$OAS_DIR/openapi.yaml" "$OAS_DIR/openapi.yml"; do
-            if [ -f "$candidate" ]; then
-              OAS_FILE="$candidate"
+          OAS_FORMAT=""
+          for f in openapi.json openapi.yaml openapi.yml; do
+            if [ -f "$OAS_DIR/$f" ]; then
+              OAS_FILE="$OAS_DIR/$f"
+              case "$f" in
+                *.json) OAS_FORMAT=json ;;
+                *.yaml|*.yml) OAS_FORMAT=yaml ;;
+              esac
               break
             fi
           done
           if [ -z "$OAS_FILE" ]; then
             echo "No OAS spec found at $OAS_DIR/openapi.{json,yaml,yml}." >&2
-            echo "Drop the OpenAPI spec for the app at one of those paths and re-run." >&2
             exit 1
           fi
+
+          echo "$VES_P12_CONTENT" | base64 -d > /tmp/api.p12
+          openssl pkcs12 -in /tmp/api.p12 -out /tmp/api.pem \
+            -nodes -passin "pass:$VES_P12_PASSWORD"
+
           OAS_B64=$(base64 -w 0 "$OAS_FILE")
-          echo "::add-mask::$OAS_B64"
-          echo "oas_b64=$OAS_B64" >> "$GITHUB_OUTPUT"
-          echo "Using OAS: $OAS_FILE ($(wc -c <"$OAS_FILE") bytes)"
+          BODY=$(jq -n \
+            --arg name "$NAME" \
+            --arg ns "$NS" \
+            --arg fmt "$OAS_FORMAT" \
+            --arg data "$OAS_B64" \
+            '{
+              namespace: $ns,
+              object_type: "swagger",
+              name: $name,
+              content_format: $fmt,
+              bytes_value: $data,
+              no_attributes: {}
+            }')
+
+          RESPONSE=$(curl -fsSL -X PUT \
+            --cert /tmp/api.pem --key /tmp/api.pem \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "${API_URL}/object_store/namespaces/${NS}/stored_objects/swagger/${NAME}")
+
+          SPEC_URL=$(echo "$RESPONSE" | jq -r '.metadata.url // empty')
+          if [ -z "$SPEC_URL" ]; then
+            echo "No metadata.url in response:" >&2
+            echo "$RESPONSE" >&2
+            exit 1
+          fi
+
+          echo "TF_VAR_xc_api_spec=[\"$SPEC_URL\"]" >> "$GITHUB_ENV"
+          rm -f /tmp/api.p12 /tmp/api.pem
 
       - name: Write /tmp/xc.tfvars.json
         shell: bash
-        env:
-          XC_OAS_CONTENT: ${{ steps.oas.outputs.oas_b64 }}
         run: |
           set -euo pipefail
           COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
@@ -557,7 +595,6 @@ jobs:
 
             xc_api_disc: (.xc_features.xc_api_disc // false),
             xc_api_pro: (.xc_features.xc_api_pro // false),
-            xc_oas_content: env.XC_OAS_CONTENT,
             xc_api_val: (.xc_features.xc_api_val // false),
             xc_api_val_all: (.xc_features.xc_api_val_all // false),
             xc_api_val_active: (.xc_features.xc_api_val_active // false),

@@ -5,5 +5,5 @@ resource "volterra_api_definition" "api-def" {
   name      = format("%s-api-def-%s", local.project_prefix, local.build_suffix)
   namespace = var.xc_namespace
 
-  swagger_specs = var.xc_oas_content != "" ? ["string:///${var.xc_oas_content}"] : var.xc_api_spec
+  swagger_specs = var.xc_api_spec
 }

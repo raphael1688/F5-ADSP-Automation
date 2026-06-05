@@ -190,13 +190,6 @@ variable "fall_through_mode_report" {
   default     = false
 }
 
-variable "xc_oas_content" {
-  type        = string
-  description = "Base64-encoded OpenAPI spec body. When set, the api_definition is built from it via the volterra string:/// inline form. Pairs with xc_api_pro."
-  default     = ""
-  sensitive   = false
-}
-
 variable "xc_api_val_custom" {
   type        = bool
   description = "Enable API Validation custom rules"
