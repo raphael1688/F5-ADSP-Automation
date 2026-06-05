@@ -26,14 +26,12 @@ locals {
     var.image_tag != "" ? { tag = var.image_tag } : {},
   )
 
-  # The chart no longer emits a VirtualServer; ingress is the consumer's concern,
-  # produced by virtualserver.tf in this module.
   chart_values = {
     image            = local.image_block
     imagePullSecrets = var.image_pull_secret_name != "" ? [{ name = var.image_pull_secret_name }] : []
+    fullnameOverride = local.release_name
   }
 
-  # Service names emitted by the chart: <release>-api and <release>-frontend.
   api_service_name      = "${local.release_name}-api"
   frontend_service_name = "${local.release_name}-frontend"
   api_service_port      = 8000
