@@ -29,7 +29,7 @@ resource "kubectl_manifest" "virtualserver" {
         routes = [
           merge(
             {
-              path = "/api"
+              path = "/api/"
               action = {
                 proxy = {
                   upstream    = "api"
