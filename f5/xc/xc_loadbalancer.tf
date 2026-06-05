@@ -295,17 +295,6 @@ resource "volterra_http_loadbalancer" "lb_https" {
     content {
       api_groups_rules {
         metadata {
-          name = format("%s-apip-deny-rule-%s", local.project_prefix, local.build_suffix)
-        }
-        action {
-          deny = true
-        }
-        base_path = "/api"
-        api_group = join("-", ["ves-io-api-def", volterra_api_definition.api-def[0].name, "all-operations"])
-      }
-
-      api_groups_rules {
-        metadata {
           name = format("%s-apip-allow-rule-%s", local.project_prefix, local.build_suffix)
         }
         action {
