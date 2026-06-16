@@ -25,3 +25,8 @@ data "terraform_remote_state" "nic" {
     prefix = var.nic_state_prefix
   }
 }
+
+# Check if the namespace in XC already exists
+data "volterra_namespace" "existing" {
+  name = var.xc_namespace
+}
