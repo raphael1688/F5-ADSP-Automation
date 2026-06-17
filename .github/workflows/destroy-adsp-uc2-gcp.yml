@@ -517,6 +517,45 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Sweep orphaned GKE LoadBalancer firewall rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          INFRA_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc2/infra/default.tfstate" 2>/dev/null || true)"
+          if [ -z "$INFRA_STATE" ]; then
+            echo "No infra state; nothing to sweep."
+            exit 0
+          fi
+
+          NETWORK=$(jq -r '.outputs.vpc_network_name.value // empty' <<<"$INFRA_STATE")
+          if [ -z "$NETWORK" ]; then
+            echo "No vpc_network_name in infra state; nothing to sweep."
+            exit 0
+          fi
+
+          # Clean up GKE-managed firewall rules orphaned on the network.
+          FWS=$(gcloud compute firewall-rules list \
+            --project="$PROJECT_ID" \
+            --filter="network~/${NETWORK}\$ AND (name~^k8s- OR name~^gke-)" \
+            --format="value(name)")
+
+          if [ -z "$FWS" ]; then
+            echo "No orphaned GKE firewall rules on $NETWORK."
+            exit 0
+          fi
+
+          echo "Deleting orphaned firewall rules on $NETWORK:"
+          echo "$FWS"
+          while IFS= read -r fw; do
+            [ -n "$fw" ] && gcloud compute firewall-rules delete "$fw" --project="$PROJECT_ID" --quiet || true
+          done <<< "$FWS"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
 
