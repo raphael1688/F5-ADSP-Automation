@@ -17,34 +17,8 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ F5 Distributed Cloud (XC)                                   │
-│ ├─ HTTP Load Balancer                                       │
-│ ├─ WAF Policy                                               │
-│ └─ Origin: BIG-IP Public IP                                 │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ GCP VPC (crafty-vpc-*)                                      │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ F5 BIG-IP (Single-NIC)                               │  │
-│  │ ├─ Management GUI/SSH (Public IP)                    │  │
-│  │ ├─ AS3 Configuration (AWAF)                          │  │
-│  │ └─ Pool Members: Juice Shop, crAPI                   │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                              │                              │
-│                              ▼                              │
-│  ┌────────────────────┐  ┌────────────────────┐           │
-│  │ Juice Shop VM      │  │ crAPI VM           │           │
-│  │ (Docker)           │  │ (Docker)           │           │
-│  └────────────────────┘  └────────────────────┘           │
-│                                                             │
-│  Subnets: mgmt (/24), ext (/18), int (/18), app (/18)     │
-└─────────────────────────────────────────────────────────────┘
-```
+<img width="2199" height="2064" alt="Architectures-V1 - UC1" src="https://github.com/user-attachments/assets/77f87b5c-7014-490f-98c9-88b49438c000" />
+
 
 ### Deployment Flow
 
