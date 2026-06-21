@@ -1,0 +1,3739 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Comfy Capybara \u2014 Secure Contract",
+    "version": "2.1.0",
+    "description": "Secure-by-contract OpenAPI specification for the Comfy Capybara API. Strict schemas, additionalProperties: false, and explicit field allowlists are designed so that an API security gateway enforcing this spec would block BOLA, BFLA, mass assignment, excessive data exposure, SSRF, and shadow API access.\n\nGame debug endpoints are intentionally excluded from this public contract."
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "Main API (behind nginx reverse-proxy)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth",
+      "description": "User and game-admin authentication"
+    },
+    {
+      "name": "capybaras",
+      "description": "Browse capybara providers (public catalog)"
+    },
+    {
+      "name": "bookings",
+      "description": "Book capybara sessions"
+    },
+    {
+      "name": "me",
+      "description": "Current authenticated user profile"
+    },
+    {
+      "name": "support",
+      "description": "Support ticket submission"
+    },
+    {
+      "name": "providers",
+      "description": "Provider (capybara) auth and self-service"
+    },
+    {
+      "name": "game",
+      "description": "Game mode control, scoring, and leaderboard"
+    },
+    {
+      "name": "union-proxy",
+      "description": "Union-rep operations (v2 and v1 legacy)"
+    },
+    {
+      "name": "admin-proxy",
+      "description": "Admin operations (requires admin role)"
+    },
+    {
+      "name": "shadow-providers",
+      "description": "Shadow v1 provider endpoints (undocumented legacy surface)"
+    },
+    {
+      "name": "jwks",
+      "description": "JSON Web Key Set for JWT verification"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "operationId": "registerUser",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Register a new user account",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthRegisterRequest"
+              },
+              "example": {
+                "email": "alice@demo.local",
+                "password": "securepass123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRegisterResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Role not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: role field is NOT accepted. Server assigns role=user."
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "loginUser",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login with email and password",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthLoginRequest"
+              },
+              "example": {
+                "email": "alice@demo.local",
+                "password": "password"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JWT token returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/game-admin/login": {
+      "post": {
+        "operationId": "loginGameAdmin",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login as game admin (sets HttpOnly cookie)",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Game admin authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameAdminLoginResponse"
+                }
+              }
+            },
+            "headers": {
+              "Set-Cookie": {
+                "description": "comfy_admin HttpOnly cookie (path=/api, samesite=lax)",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/capybaras": {
+      "get": {
+        "operationId": "listCapybaras",
+        "tags": [
+          "capybaras"
+        ],
+        "summary": "List all capybara providers",
+        "security": [],
+        "parameters": [
+          {
+            "name": "minRate",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Minimum hourly rate filter"
+          },
+          {
+            "name": "maxRate",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1000000000
+            },
+            "description": "Maximum hourly rate filter"
+          },
+          {
+            "name": "mood",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "description": "Filter by current mood"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of capybara providers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CapybaraPublic"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/capybaras/{capy_id}": {
+      "get": {
+        "operationId": "getCapybara",
+        "tags": [
+          "capybaras"
+        ],
+        "summary": "Get a single capybara by ID",
+        "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CapybaraId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Capybara details (public fields only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapybaraPublic"
+                }
+              }
+            },
+            "x-security-requirements": "Secure contract: response MUST NOT include provider_password or union_notes."
+          },
+          "404": {
+            "description": "Capybara not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings": {
+      "post": {
+        "operationId": "createBooking",
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Create a new booking",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookingCreateRequest"
+              },
+              "example": {
+                "capybara_id": 1,
+                "start": "2026-03-01 10AM",
+                "duration_mins": 60
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Booking created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: user_id is set server-side from JWT. Client MUST NOT supply user_id, status, union_override, or price_quoted."
+      },
+      "get": {
+        "operationId": "listBookings",
+        "tags": [
+          "bookings"
+        ],
+        "summary": "List your own bookings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of bookings belonging to the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BookingResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: user_id query parameter is NOT accepted. Server always filters by authenticated user's ID."
+      }
+    },
+    "/bookings/{booking_id}": {
+      "get": {
+        "operationId": "getBooking",
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Get a booking by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BookingId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking details (only if owned by authenticated user)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the booking owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Booking not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: server MUST verify booking.user_id matches authenticated user (BOLA prevention)."
+      },
+      "patch": {
+        "operationId": "updateBooking",
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Update a booking",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BookingId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookingUpdateRequest"
+              },
+              "example": {
+                "start": "2026-03-02 2PM",
+                "notes": "Please bring extra towels"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Booking updated (only if owned by authenticated user)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the booking owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Booking not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: only start, duration_mins, and notes are modifiable. status, union_override, price_quoted, user_id MUST be rejected. Server MUST verify ownership."
+      },
+      "delete": {
+        "operationId": "cancelBooking",
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Cancel (delete) a booking",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BookingId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelBookingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the booking owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Booking not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: server MUST verify booking.user_id matches authenticated user (BOLA prevention)."
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "getMe",
+        "tags": [
+          "me"
+        ],
+        "summary": "Get current user profile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile (safe fields only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: fields query parameter is NOT accepted. Response MUST NOT include password, salary, or any sensitive internal field."
+      }
+    },
+    "/support/tickets": {
+      "post": {
+        "operationId": "createSupportTicket",
+        "tags": [
+          "support"
+        ],
+        "summary": "Submit a support ticket",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupportTicketCreateRequest"
+              },
+              "example": {
+                "message": "My capybara was late to the session."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupportTicketCreateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: attachmentUrl field is NOT accepted. Server-side URL fetching is disabled to prevent SSRF."
+      }
+    },
+    "/providers/register": {
+      "post": {
+        "operationId": "registerProvider",
+        "tags": [
+          "providers"
+        ],
+        "summary": "Register a new capybara provider",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderRegisterRequest"
+              },
+              "example": {
+                "name": "Mochi",
+                "temperament": "chill",
+                "provider_password": "bamboo123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Provider registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderRegisterResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: union_rank is NOT accepted from client. Server assigns Apprentice. hourly_rate is server-computed from rank."
+      }
+    },
+    "/providers/login": {
+      "post": {
+        "operationId": "loginProvider",
+        "tags": [
+          "providers"
+        ],
+        "summary": "Login as a capybara provider",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderLoginRequest"
+              },
+              "example": {
+                "id": 1,
+                "password": "bamboo"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Provider JWT token returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing id or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid provider credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/me": {
+      "get": {
+        "operationId": "getProviderMe",
+        "tags": [
+          "providers"
+        ],
+        "summary": "Get current provider profile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider profile (public fields only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapybaraPublic"
+                }
+              }
+            },
+            "x-security-requirements": "Secure contract: response MUST NOT include provider_password or union_notes."
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Provider access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Capybara not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "provider"
+        ]
+      },
+      "patch": {
+        "operationId": "updateProviderMe",
+        "tags": [
+          "providers"
+        ],
+        "summary": "Update current provider profile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderUpdateRequest"
+              },
+              "example": {
+                "temperament": "playful",
+                "current_mood": "excited"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Provider profile updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapybaraPublic"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Provider access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Capybara not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-security-requirements": "Secure contract: id field MUST NOT be accepted (BOLA prevention). Only temperament and current_mood are modifiable. Server MUST use capybara_id from JWT claims.",
+        "x-required-roles": [
+          "provider"
+        ]
+      }
+    },
+    "/game/boot": {
+      "get": {
+        "operationId": "getGameBoot",
+        "tags": [
+          "game"
+        ],
+        "summary": "Get boot ID and game state for polling",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Boot info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameBootResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/mode": {
+      "get": {
+        "operationId": "getGameMode",
+        "tags": [
+          "game"
+        ],
+        "summary": "Get current game mode",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Current mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameModeResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "setGameMode",
+        "tags": [
+          "game"
+        ],
+        "summary": "Set game mode (admin only)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetModeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mode changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSetModeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "game_admin",
+          "admin"
+        ]
+      }
+    },
+    "/game/players/join": {
+      "post": {
+        "operationId": "joinRound",
+        "tags": [
+          "game"
+        ],
+        "summary": "Join an active game round as a player",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerJoinRequest"
+              },
+              "example": {
+                "name": "PlayerOne",
+                "pin": "123456"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Player joined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerJoinResponse"
+                }
+              }
+            },
+            "headers": {
+              "Set-Cookie": {
+                "description": "comfy_session HttpOnly cookie",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No active round, invalid PIN, or name taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/players/register": {
+      "post": {
+        "operationId": "registerPlayer",
+        "tags": [
+          "game"
+        ],
+        "summary": "Register as a player (alias for join)",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerJoinRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Player registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerJoinResponse"
+                }
+              }
+            },
+            "headers": {
+              "Set-Cookie": {
+                "description": "comfy_session HttpOnly cookie",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No active round, invalid PIN, or name taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/players/refresh": {
+      "post": {
+        "operationId": "refreshPlayerToken",
+        "tags": [
+          "game"
+        ],
+        "summary": "Rotate player session token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerJoinResponse"
+                }
+              }
+            },
+            "headers": {
+              "Set-Cookie": {
+                "description": "comfy_session HttpOnly cookie (updated)",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/reset-game": {
+      "post": {
+        "operationId": "resetGame",
+        "tags": [
+          "game"
+        ],
+        "summary": "Reset entire game state (admin only)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Game reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameBootActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "game_admin",
+          "admin"
+        ],
+        "x-internal": true
+      }
+    },
+    "/game/demo-reset": {
+      "post": {
+        "operationId": "demoReset",
+        "tags": [
+          "game"
+        ],
+        "summary": "Reset into demo mode (admin only)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Demo mode set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameDemoResetResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "game_admin",
+          "admin"
+        ],
+        "x-internal": true
+      }
+    },
+    "/game/start": {
+      "post": {
+        "operationId": "startTurn",
+        "tags": [
+          "game"
+        ],
+        "summary": "Start a new turn/round",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartTurnRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Turn started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameStartResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required (game mode)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required (game mode)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "game_admin",
+          "admin"
+        ]
+      }
+    },
+    "/game/status": {
+      "get": {
+        "operationId": "getGameStatus",
+        "tags": [
+          "game"
+        ],
+        "summary": "Get current game/scoring status",
+        "security": [],
+        "parameters": [
+          {
+            "name": "X-Comfy-Player",
+            "in": "header",
+            "description": "Player session token (alternative to comfy_session cookie)",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Game status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/mark/{exploit_id}": {
+      "post": {
+        "operationId": "markExploit",
+        "tags": [
+          "game"
+        ],
+        "summary": "Manually mark an exploit as scored",
+        "security": [],
+        "parameters": [
+          {
+            "name": "exploit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Z_]+$"
+            },
+            "description": "Exploit identifier from the exploit registry"
+          },
+          {
+            "name": "X-Comfy-Player",
+            "in": "header",
+            "description": "Player session token",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scoring result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoringResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/finish": {
+      "post": {
+        "operationId": "finishTurn",
+        "tags": [
+          "game"
+        ],
+        "summary": "Finish current turn and submit score",
+        "security": [],
+        "parameters": [
+          {
+            "name": "X-Comfy-Player",
+            "in": "header",
+            "description": "Player session token",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinishRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Turn finished, leaderboard entry created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinishResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid player session required (game mode)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/surrender": {
+      "post": {
+        "operationId": "surrender",
+        "tags": [
+          "game"
+        ],
+        "summary": "Surrender current turn",
+        "security": [],
+        "parameters": [
+          {
+            "name": "X-Comfy-Player",
+            "in": "header",
+            "description": "Player session token",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurrenderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Surrendered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurrenderResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid player session required (game mode)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/leaderboard": {
+      "get": {
+        "operationId": "getLeaderboard",
+        "tags": [
+          "game"
+        ],
+        "summary": "Get the leaderboard",
+        "security": [],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            },
+            "description": "Max entries to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Leaderboard entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LeaderboardEntry"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/union/capybaras": {
+      "get": {
+        "operationId": "listUnionCapybaras",
+        "tags": [
+          "union-proxy"
+        ],
+        "summary": "List capybaras with union details",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of capybaras with union data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnionCapybaraListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "union_rep",
+          "admin"
+        ]
+      }
+    },
+    "/v2/union/capybaras/{capy_id}": {
+      "get": {
+        "operationId": "getUnionCapybara",
+        "tags": [
+          "union-proxy"
+        ],
+        "summary": "Get a single capybara with union details",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CapybaraId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Capybara union record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnionCapybaraSingleResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "union_rep",
+          "admin"
+        ]
+      },
+      "patch": {
+        "operationId": "updateUnionCapybara",
+        "tags": [
+          "union-proxy"
+        ],
+        "summary": "Update union data for a capybara",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CapybaraId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnionUpdateRequest"
+              },
+              "example": {
+                "union_rank": "Senior",
+                "union_notes": "Excellent performance review"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Union record updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnionUpdateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "union_rep",
+          "admin",
+          "user"
+        ]
+      }
+    },
+    "/admin/users/{user_id}": {
+      "delete": {
+        "operationId": "adminDeleteUser",
+        "tags": [
+          "admin-proxy"
+        ],
+        "summary": "Delete a user account (admin only)",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDeleteUserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/providers/{capy_id}": {
+      "delete": {
+        "operationId": "adminDeleteProvider",
+        "tags": [
+          "admin-proxy"
+        ],
+        "summary": "Delete a capybara provider (admin only)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CapybaraId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDeleteProviderResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "admin"
+        ],
+        "x-security-requirements": "Secure contract: MUST require admin role (BFLA prevention). Any non-admin user MUST receive 403."
+      }
+    },
+    "/admin/union-reps": {
+      "delete": {
+        "operationId": "adminDeleteUnionReps",
+        "tags": [
+          "admin-proxy"
+        ],
+        "summary": "Delete all union rep accounts (admin only)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Union reps deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDeleteUnionRepsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/all": {
+      "delete": {
+        "operationId": "adminDeleteAll",
+        "tags": [
+          "admin-proxy"
+        ],
+        "summary": "Truncate all application data (admin only)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All data deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/reseed": {
+      "post": {
+        "operationId": "adminReseed",
+        "tags": [
+          "admin-proxy"
+        ],
+        "summary": "Reset and re-seed demo data (admin only)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Data re-seeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "admin"
+        ]
+      }
+    },
+    "/.well-known/jwks.json": {
+      "get": {
+        "operationId": "getJwks",
+        "tags": [
+          "jwks"
+        ],
+        "summary": "RSA public key in JWKS format",
+        "description": "Returns the JSON Web Key Set containing the RSA public key used to verify JWT signatures issued by this API.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "JWKS response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JwksResponse"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "example": "public, max-age=3600"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/union/capybaras": {
+      "get": {
+        "operationId": "listLegacyHRRecords",
+        "tags": [
+          "union-proxy"
+        ],
+        "summary": "List legacy HR records (shadow API proxy)",
+        "description": "Proxies to shadow-api. Returns PII fields (addresses, bank data, SSNs). Secure contract: requires JWT authentication with union_rep or admin role. No legacy key bypass.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of legacy HR records with PII",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LegacyHRRecord"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required or legacy key invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-roles": [
+          "union_rep",
+          "admin"
+        ]
+      }
+    },
+    "/v1/union/capybaras/{capy_id}": {
+      "get": {
+        "operationId": "getLegacyHRRecord",
+        "tags": [
+          "union-proxy"
+        ],
+        "summary": "Get a single legacy HR record",
+        "description": "Proxies to shadow-api. Returns PII for a single capybara. Requires authentication but no role check (BOLA vulnerability in implementation).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CapybaraId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Legacy HR record with PII",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyHRRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Record not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-roles": [
+          "union_rep",
+          "admin"
+        ]
+      },
+      "patch": {
+        "operationId": "updateLegacyHRRecord",
+        "tags": [
+          "union-proxy"
+        ],
+        "summary": "Update a legacy HR record",
+        "description": "Proxies to shadow-api. Updates fields on the legacy HR record. Secure contract restricts to notes only; implementation accepts all fields (mass assignment vulnerability).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CapybaraId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyHRUpdateRequest"
+              },
+              "example": {
+                "union_notes": "Updated payroll notes"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated HR record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyHRRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Record not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-roles": [
+          "union_rep",
+          "admin"
+        ]
+      }
+    },
+    "/v1/providers/{object_id}": {
+      "get": {
+        "operationId": "getShadowProvider",
+        "tags": [
+          "shadow-providers"
+        ],
+        "summary": "Get provider by ID (shadow endpoint)",
+        "description": "Returns a single capybara provider record. Secure contract: provider can only access their own record (object_id must equal token.capybara_id).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapybaraPublic"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Provider access required or accessing another provider's record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-roles": [
+          "provider"
+        ],
+        "x-object-level-authorization": {
+          "field": "object_id",
+          "must-match": "token.capybara_id",
+          "description": "Provider can only access their own record"
+        }
+      },
+      "patch": {
+        "operationId": "updateShadowProvider",
+        "tags": [
+          "shadow-providers"
+        ],
+        "summary": "Update provider by ID (shadow endpoint)",
+        "description": "Updates a capybara provider. Secure contract: provider can only update their own record, and only temperament and current_mood fields are accepted.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderUpdateRequest"
+              },
+              "example": {
+                "current_mood": "happy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated provider record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapybaraPublic"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Provider access required or modifying another provider's record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-roles": [
+          "provider"
+        ],
+        "x-object-level-authorization": {
+          "field": "object_id",
+          "must-match": "token.capybara_id",
+          "description": "Provider can only modify their own record"
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT (RS256) token obtained from /auth/login or /providers/login. Verify via /.well-known/jwks.json. Include as: Authorization: Bearer <token>. Standard claims: iss=comfy-capybara, aud=comfy-api, sub=<user_id|capy_id>.",
+        "x-jwks-uri": "/api/.well-known/jwks.json",
+        "x-jwt-claims": {
+          "iss": "comfy-capybara",
+          "aud": "comfy-api",
+          "sub": "string (user ID, game admin ID, or capybara ID)"
+        }
+      }
+    },
+    "parameters": {
+      "AuthorizationHeader": {
+        "name": "Authorization",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^Bearer [A-Za-z0-9\\-_\\.]+$"
+        },
+        "description": "JWT Bearer token"
+      },
+      "CapybaraId": {
+        "name": "capy_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Capybara provider ID"
+      },
+      "BookingId": {
+        "name": "booking_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Booking ID"
+      },
+      "ObjectId": {
+        "name": "object_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Capybara provider ID. Secure contract: MUST match the authenticated provider's own capybara_id."
+      }
+    },
+    "schemas": {
+      "JwkKey": {
+        "type": "object",
+        "required": [
+          "kty",
+          "use",
+          "alg",
+          "kid",
+          "n",
+          "e"
+        ],
+        "properties": {
+          "kty": {
+            "type": "string",
+            "enum": [
+              "RSA"
+            ]
+          },
+          "use": {
+            "type": "string",
+            "enum": [
+              "sig"
+            ]
+          },
+          "alg": {
+            "type": "string",
+            "enum": [
+              "RS256"
+            ]
+          },
+          "kid": {
+            "type": "string"
+          },
+          "n": {
+            "type": "string",
+            "description": "RSA modulus (Base64url)"
+          },
+          "e": {
+            "type": "string",
+            "description": "RSA exponent (Base64url)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JwksResponse": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JwkKey"
+            },
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthRegisterRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: role field is explicitly excluded. Server always assigns role=user."
+      },
+      "AuthRegisterResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthLoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "TokenResponse": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameAdminLoginResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "token"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "token": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "CapybaraPublic": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "temperament",
+          "union_rank",
+          "hourly_rate",
+          "availability_status",
+          "current_mood"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "temperament": {
+            "type": "string"
+          },
+          "union_rank": {
+            "type": "string",
+            "enum": [
+              "Apprentice",
+              "Junior",
+              "Senior",
+              "Zen Master"
+            ]
+          },
+          "hourly_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "availability_status": {
+            "type": "string"
+          },
+          "current_mood": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Public capybara view. Excludes provider_password and union_notes."
+      },
+      "BookingCreateRequest": {
+        "type": "object",
+        "required": [
+          "capybara_id",
+          "start"
+        ],
+        "properties": {
+          "capybara_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "start": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "duration_mins": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 480,
+            "default": 60
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: user_id, status, union_override, price_quoted MUST NOT be accepted."
+      },
+      "BookingUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "duration_mins": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 480
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: only start, duration_mins, and notes are modifiable. status, union_override, price_quoted, user_id MUST be rejected."
+      },
+      "BookingResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "capybara_id",
+          "start",
+          "duration_mins",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "capybara_id": {
+            "type": "integer"
+          },
+          "start": {
+            "type": "string"
+          },
+          "duration_mins": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "requested",
+              "accepted",
+              "rejected",
+              "cancelled",
+              "completed"
+            ]
+          },
+          "price_quoted": {
+            "type": "integer"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Booking record. union_override is excluded from response."
+      },
+      "CancelBookingResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "deleted_booking_id"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "deleted_booking_id": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "email"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "admin",
+              "union_rep"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: only id, email, role. No password, salary, or internal fields."
+      },
+      "SupportTicketCreateRequest": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: attachmentUrl is explicitly excluded to prevent SSRF."
+      },
+      "SupportTicketCreateResponse": {
+        "type": "object",
+        "required": [
+          "ticket"
+        ],
+        "properties": {
+          "ticket": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: attachmentFetch field excluded. No server-side URL fetch results exposed."
+      },
+      "ProviderRegisterRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "temperament"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "temperament": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "provider_password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+          },
+          "current_mood": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: union_rank is NOT accepted. Server assigns Apprentice. hourly_rate is server-computed."
+      },
+      "ProviderRegisterResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "union_rank",
+          "hourly_rate"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "union_rank": {
+            "type": "string",
+            "enum": [
+              "Apprentice"
+            ]
+          },
+          "hourly_rate": {
+            "type": "integer",
+            "enum": [
+              20
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "Newly registered provider. Always starts as Apprentice at rate 20."
+      },
+      "ProviderLoginRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "password"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProviderUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "temperament": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "current_mood": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: only temperament and current_mood. id, name, union_rank, hourly_rate, provider_password, union_notes MUST be rejected."
+      },
+      "GameBootResponse": {
+        "type": "object",
+        "required": [
+          "boot_id",
+          "boot_ts_ms",
+          "mode",
+          "active"
+        ],
+        "properties": {
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_ts_ms": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "booth",
+              "game"
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameModeResponse": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "booth",
+              "game"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SetModeRequest": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "booth",
+              "game"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameSetModeResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "mode",
+          "boot_id",
+          "boot_ts_ms"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "booth",
+              "game"
+            ]
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_ts_ms": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PlayerJoinRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "pin": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "description": "6-digit round PIN"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PlayerJoinResponse": {
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "session_token"
+        ],
+        "properties": {
+          "player_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "session_token": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "RefreshTokenRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameBootActionResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "boot_id",
+          "boot_ts_ms"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_ts_ms": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameDemoResetResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "mode",
+          "boot_id",
+          "boot_ts_ms"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "demo"
+            ]
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_ts_ms": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StartTurnRequest": {
+        "type": "object",
+        "properties": {
+          "duration_sec": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 3600,
+            "default": 300
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameStartResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "boot_id",
+          "boot_ts_ms"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "boot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "boot_ts_ms": {
+            "type": "integer"
+          },
+          "pin": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "description": "Round PIN (returned only in game mode)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameStatusResponse": {
+        "type": "object",
+        "required": [
+          "mode",
+          "active",
+          "remaining_ms",
+          "start_ms",
+          "points_total",
+          "scored"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "booth",
+              "game"
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "remaining_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start_ms": {
+            "type": "integer"
+          },
+          "points_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scored": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "last_event": {
+            "type": "array",
+            "items": {},
+            "description": "[timestamp_ms, exploit_id, points, delta, total]"
+          },
+          "meta": {}
+        },
+        "additionalProperties": false
+      },
+      "ScoringResult": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "awarded": {
+            "type": "boolean"
+          },
+          "ignored": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "exploit_id": {
+            "type": "string"
+          },
+          "delta_points": {
+            "type": "integer"
+          },
+          "total_points": {
+            "type": "integer"
+          },
+          "by": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "multiplier": {
+            "type": "number"
+          },
+          "tool_conflict": {
+            "type": "boolean"
+          },
+          "actor": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FinishRequest": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Booth mode player counter"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 32,
+            "default": "finished"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FinishResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "id",
+          "points",
+          "reason"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "player": {
+            "type": "integer",
+            "description": "Booth mode counter"
+          },
+          "player_id": {
+            "type": "string",
+            "description": "Game mode player ID"
+          },
+          "player_name": {
+            "type": "string",
+            "description": "Game mode player name"
+          },
+          "points": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ignored": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SurrenderRequest": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "SurrenderResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "id"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "player_id": {
+            "type": "string"
+          },
+          "ignored": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LeaderboardEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "points",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "player": {
+            "type": "integer",
+            "description": "Booth mode counter"
+          },
+          "player_id": {
+            "type": "string",
+            "description": "Game mode player ID"
+          },
+          "player_name": {
+            "type": "string",
+            "description": "Game mode player name"
+          },
+          "points": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnionCapybaraRecord": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "temperament": {
+            "type": "string"
+          },
+          "union_rank": {
+            "type": "string"
+          },
+          "hourly_rate": {
+            "type": "integer"
+          },
+          "availability_status": {
+            "type": "string"
+          },
+          "current_mood": {
+            "type": "string"
+          },
+          "union_notes": {
+            "type": "string",
+            "x-pii": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Union view of capybara. Includes union_notes for authorized roles. Excludes provider_password."
+      },
+      "UnionCapybaraListResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "count",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnionCapybaraRecord"
+            }
+          },
+          "count": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnionCapybaraSingleResponse": {
+        "type": "object",
+        "required": [
+          "item"
+        ],
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/UnionCapybaraRecord"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnionUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "union_rank": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "union_notes": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnionUpdateResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "union_rank",
+          "union_notes"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "union_rank": {
+            "type": "string"
+          },
+          "union_notes": {
+            "type": "string",
+            "x-pii": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminDeleteUserResponse": {
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "object",
+            "required": [
+              "id",
+              "email",
+              "role"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "email": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminDeleteProviderResponse": {
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminDeleteUnionRepsResponse": {
+        "type": "object",
+        "required": [
+          "deleted_union_reps"
+        ],
+        "properties": {
+          "deleted_union_reps": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminOkResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "action"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "action": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LegacyHRRecord": {
+        "type": "object",
+        "required": [
+          "id",
+          "capybara_id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "capybara_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "home_address": {
+            "type": "string",
+            "x-pii": true
+          },
+          "bank_name": {
+            "type": "string",
+            "x-pii": true
+          },
+          "bank_account_last4": {
+            "type": "string",
+            "maxLength": 4,
+            "x-pii": true
+          },
+          "pay_routing_token": {
+            "type": "string",
+            "x-pii": true
+          },
+          "capybara_social_id": {
+            "type": "string",
+            "x-pii": true
+          },
+          "union_notes": {
+            "type": "string",
+            "x-pii": true
+          },
+          "payroll_notes": {
+            "type": "string",
+            "x-pii": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Legacy HR record from shadow-api. Contains PII fields (addresses, bank data, SSNs)."
+      },
+      "LegacyHRUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "union_notes": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false,
+        "description": "Secure contract: only union_notes is permitted. payroll_notes and all PII fields (home_address, bank_name, bank_account_last4, pay_routing_token, capybara_social_id) must be rejected."
+      }
+    }
+  }
+}

@@ -16,13 +16,13 @@ data "terraform_remote_state" "bigip" {
   }
 }
 
-# Remote state: NIC outputs (UC2 origin source)
-data "terraform_remote_state" "nic" {
-  count   = var.backend_nic ? 1 : 0
+# Remote state: ingress data-plane outputs (origin source)
+data "terraform_remote_state" "k8s_ingress" {
+  count   = var.backend_k8s_ingress ? 1 : 0
   backend = "gcs"
   config = {
     bucket = var.tf_state_bucket
-    prefix = var.nic_state_prefix
+    prefix = var.k8s_ingress_state_prefix
   }
 }
 

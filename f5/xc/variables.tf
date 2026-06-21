@@ -43,24 +43,19 @@ variable "backend_bigip" {
   default     = false
 }
 
-variable "backend_nic" {
+variable "backend_k8s_ingress" {
   type        = bool
-  description = "Whether to reference NIC remote state for the origin LoadBalancer IP."
+  description = "Whether to reference the ingress data-plane remote state for the origin LoadBalancer IP."
   default     = false
 }
 
-variable "nic_state_prefix" {
+variable "k8s_ingress_state_prefix" {
   type        = string
-  description = "GCS prefix where NIC + NAP state is stored. Read when backend_nic is true."
+  description = "GCS prefix where the ingress data-plane (NIC or NGF) state is stored. Read when backend_k8s_ingress is true."
   default     = "state/uc2/nic"
 }
 
 # XC
-variable "xc_tenant" {
-  type        = string
-  description = "Your F5 XC tenant name"
-}
-
 variable "api_url" {
   type        = string
   description = "Your F5 XC tenant api url"
@@ -407,7 +402,7 @@ variable "xc_sensitive_data_compliances" {
 # Origin backend configuration
 variable "origin_server" {
   type        = string
-  description = "Origin server IP or DNS name (can be auto-discovered from remote state if backend_bigip/backend_nic enabled)"
+  description = "Origin server IP or DNS name (can be auto-discovered from remote state if backend_bigip/backend_k8s_ingress enabled)"
   default     = ""
 }
 

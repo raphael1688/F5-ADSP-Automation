@@ -18,7 +18,7 @@ output "virtualserver_name" {
   description = "Name of the VirtualServer resource managed by this module."
 }
 
-output "nic_external_ip" {
-  value       = local.nic.nic_external_ip
-  description = "Passthrough from NIC remote state. The XC block will use this as origin_server."
+output "k8s_ingress_external_ip" {
+  value       = local.k8s_ingress.k8s_ingress_external_ip
+  description = "Passthrough from the ingress data-plane state. Used by the XC block as origin_server."
 }

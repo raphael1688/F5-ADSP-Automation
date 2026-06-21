@@ -15,7 +15,7 @@ output "nic_service_name" {
   description = "Kubernetes Service name for the NIC LoadBalancer."
 }
 
-output "nic_external_ip" {
+output "k8s_ingress_external_ip" {
   value       = try(data.kubernetes_service_v1.nic.status[0].load_balancer[0].ingress[0].ip, null)
   description = "External IP assigned to the NIC LoadBalancer Service. Used as the XC origin."
 }

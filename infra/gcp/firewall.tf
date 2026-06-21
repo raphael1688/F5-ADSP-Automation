@@ -4,7 +4,7 @@ locals {
   tag_external   = "${var.project_prefix}-ext"
   tag_management = "${var.project_prefix}-mgmt"
   tag_internal   = "${var.project_prefix}-int"
-  tag_nic_ext    = "${var.project_prefix}-nic-ext"
+  tag_k8s_ext    = "${var.project_prefix}-k8s-ext"
 
   # F5 Distributed Cloud regional egress ranges. 
   xc_origin_ranges = [
@@ -114,17 +114,17 @@ resource "google_compute_firewall" "bigip_external" {
   }
 }
 
-############################ NIC Firewall Rules (Conditional) ############################
+############################ Kubernetes Ingress Firewall Rules (Conditional) ############################
 
-# NIC External (Data Plane)
-resource "google_compute_firewall" "nic_external" {
-  count     = var.nic ? 1 : 0
-  name      = "${var.project_prefix}-fw-nic-ext-${random_id.build_suffix.hex}"
+# Kubernetes ingress data plane (GKE LoadBalancer)
+resource "google_compute_firewall" "k8s_ingress_external" {
+  count     = var.k8s_ingress ? 1 : 0
+  name      = "${var.project_prefix}-fw-k8s-ext-${random_id.build_suffix.hex}"
   network   = google_compute_network.vpc.name
   direction = "INGRESS"
   priority  = 1000
 
-  target_tags   = [local.tag_nic_ext]
+  target_tags   = [local.tag_k8s_ext]
   source_ranges = concat(var.admin_src_addr, local.xc_origin_ranges)
 
   allow {

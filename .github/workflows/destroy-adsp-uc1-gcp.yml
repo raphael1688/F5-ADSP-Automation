@@ -95,7 +95,6 @@ jobs:
             infra_state_prefix: "state/uc1/infra",
             bigip_state_prefix: "state/uc1/bigip-base",
 
-            xc_tenant: .xc_base.xc_tenant,
             api_url: .xc_base.api_url,
             xc_namespace: .xc_base.xc_namespace,
             app_domain: .xc_base.app_domain,
@@ -372,10 +371,8 @@ jobs:
             resource_owner,
             admin_src_addr,
 
-            nap: ( .features.nap // false ),
-            nic: ( .features.nginx_ingress_controller // false ),
-            bigip: ( .features.bigip // false ),
-            "bigip_cis": ( .features.bigip_cis // false )
+            k8s_ingress: ( .features.nginx_ingress_controller // false ),
+            bigip: ( .features.bigip // false )
           }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
 
       - name: Auth to Google Cloud (WIF)

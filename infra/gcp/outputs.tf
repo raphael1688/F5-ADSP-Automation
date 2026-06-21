@@ -76,9 +76,9 @@ output "tag_int" {
   value       = "${var.project_prefix}-int"
   description = "Network tag for internal instances"
 }
-output "tag_nic_ext" {
-  value       = local.tag_nic_ext
-  description = "Network tag for NIC external-facing data plane (GKE LoadBalancer)"
+output "tag_k8s_ext" {
+  value       = local.tag_k8s_ext
+  description = "Network tag for the Kubernetes ingress data plane (GKE LoadBalancer)"
 }
 
 # GKE subnet outputs (null when var.gke = false)

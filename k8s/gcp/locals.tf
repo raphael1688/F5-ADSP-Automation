@@ -9,7 +9,7 @@ locals {
   k8s_subnet_name         = local.infra.k8s_subnet_name
   k8s_pods_range_name     = local.infra.k8s_pods_range_name
   k8s_services_range_name = local.infra.k8s_services_range_name
-  tag_nic_ext             = local.infra.tag_nic_ext
+  tag_k8s_ext             = local.infra.tag_k8s_ext
 
   cluster_name = "${local.project_prefix}-gke-${local.build_suffix}"
 

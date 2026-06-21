@@ -1,18 +1,20 @@
-# Deploy Use-Case 2 in Google Cloud
+# Deploy Use-Case 4 in Google Cloud
 
-This document provides complete instructions for deploying Application Security and Delivery Portfolio (ADSP) Use-Case 2 in Google Cloud Platform.
+This document provides complete instructions for deploying Application Security and Delivery Portfolio (ADSP) Use-Case 4 in Google Cloud Platform.
 
 ---
 
 ## Overview
 
-This repository deploys a Kubernetes-based application security demonstration consisting of:
+Use-Case 4 is the Use-Case 2 demonstration with the in-cluster data plane swapped from NGINX Ingress Controller + NGINX App Protect to **NGINX Gateway Fabric (NGF)** on the Kubernetes Gateway API. NAP is not used; WAF and API protection are provided entirely by F5 Distributed Cloud at the edge.
+
+This repository deploys a Kubernetes-based application delivery demonstration consisting of:
 
 - **Network Infrastructure** - VPC with a dedicated `k8s` subnet (with secondary ranges for pods and services), management subnet, and NAT for private nodes
 - **GKE Standard Cluster** - zonal cluster with private nodes, public control plane locked down by authorized networks, Dataplane V2, Workload Identity, shielded nodes
-- **F5 NGINX Ingress Controller (NIC)** with **NGINX App Protect V5 (NAP V5)** sidecars (`waf-enforcer`, `waf-config-mgr`)
-- **Application Workload** - `comfy-capybara` deployed via the `oci://ghcr.io/knowbase/charts/comfy-capybara` Helm chart, exposed through a NIC `VirtualServer` with the NAP `waf-policy` attached
-- **F5 Distributed Cloud (XC)** - HTTPS LoadBalancer with WAF and API protection (validation report, fall-through report) fronting the NIC ingress; origin auto-discovered from the NIC LoadBalancer IP via remote state
+- **F5 NGINX Gateway Fabric (NGF)** running **NGINX Plus**, installed via the `oci://ghcr.io/nginx/charts/nginx-gateway-fabric` chart. The control plane provisions an NGINX data plane `Deployment` and a `Service` of type `LoadBalancer` when the `Gateway` is created.
+- **Application Workload** - `comfy-capybara` deployed via the `oci://ghcr.io/knowbase/charts/comfy-capybara` Helm chart, exposed through a Gateway API `HTTPRoute` attached to the NGF `Gateway`
+- **F5 Distributed Cloud (XC)** - HTTPS LoadBalancer with WAF and API protection (validation report, fall-through report) fronting the NGF data plane; origin auto-discovered from the data plane LoadBalancer IP via remote state
 
 The deployment is orchestrated entirely through GitHub Actions using Terraform with GCS remote state. Local execution is not supported.
 
@@ -26,8 +28,8 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 │ ├─ API Protection (api_definition built from your OAS)      │
 │ │  ├─ Validation: active, report mode                       │
 │ │  └─ Fall-through: report mode                             │
-│ └─ Origin: NIC LoadBalancer Public IP (from NIC state       │
-│    via the backend_nic flag)                                │
+│ └─ Origin: NGF data plane LoadBalancer Public IP            │
+│    (from NGF state via the backend_k8s_ingress flag)        │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -38,20 +40,20 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 │  │ GKE Standard Cluster (zonal, private nodes)          │  │
 │  │                                                       │  │
 │  │  ┌────────────────────────────────────────────────┐  │  │
-│  │  │ Namespace: nginx-ingress                       │  │  │
-│  │  │ ├─ NIC Helm release                            │  │  │
-│  │  │ │  └─ NAP sidecars: waf-enforcer + config-mgr  │  │  │
-│  │  │ ├─ Policy CRD: waf-policy (compiled bundle)    │  │  │
-│  │  │ └─ Service type=LoadBalancer (public IP)       │  │  │
+│  │  │ Namespace: nginx-gateway                       │  │  │
+│  │  │ ├─ NGF control plane (Helm release)            │  │  │
+│  │  │ ├─ Gateway (gatewayClassName: nginx)           │  │  │
+│  │  │ └─ Provisioned data plane: <gateway>-nginx     │  │  │
+│  │  │    Deployment + Service type=LoadBalancer      │  │  │
 │  │  └────────────────────────────────────────────────┘  │  │
 │  │                              │                        │  │
-│  │                              ▼  (VirtualServer route) │  │
+│  │                              ▼  (HTTPRoute attach)    │  │
 │  │  ┌────────────────────────────────────────────────┐  │  │
 │  │  │ Namespace: comfy-capybara                      │  │  │
 │  │  │ ├─ Deployments: frontend, api, internal-mock,  │  │  │
 │  │  │ │              shadow-api, db                  │  │  │
-│  │  │ └─ VirtualServer (refs waf-policy in           │  │  │
-│  │  │    nginx-ingress, server-wide + /api)          │  │  │
+│  │  │ └─ HTTPRoute (parentRef: Gateway in            │  │  │
+│  │  │    nginx-gateway; /api → api, / → frontend)    │  │  │
 │  │  └────────────────────────────────────────────────┘  │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                                                             │
@@ -70,28 +72,25 @@ The GitHub Actions workflow deploys modules sequentially with dependencies:
    ↓
 3. Terraform: GKE (Standard zonal cluster, private nodes, authorized networks)
    ↓
-4. Workflow: Compile NAP policy (waf-compiler 5.4.0 → /tmp/compiled_policy.tgz)
+4. Terraform: NGF (Gateway API CRDs, NGF control plane Helm release, Gateway)
    ↓
-5. Terraform: NIC + NAP (Helm release; bundle mounted via GCS Fuse CSI)
+5. Terraform: App (helm_release of comfy-capybara; emits a Gateway API HTTPRoute)
    ↓
-6. Terraform: App (helm_release of comfy-capybara; chart emits a NIC VirtualServer)
-   ↓
-7. Terraform: F5 XC (HTTP LB + WAF + api_definition from your OAS; origin = NIC LB IP)
+6. Terraform: F5 XC (HTTP LB + WAF + api_definition from your OAS; origin = NGF data plane LB IP)
 ```
 
-**NAP V5 Policy Flow:**
-- Policy source lives at `config/uc2/nap/policy.json`
-- Workflow runs `private-registry.nginx.com/nap/waf-compiler:5.4.0` to produce `/tmp/compiled_policy.tgz`, then uploads it to `gs://<state-bucket>/artifacts/uc2/nap/compiled_policy.tgz`
-- NIC pod mounts that GCS path read-only at `/etc/app_protect/bundles` via the GCS Fuse CSI driver, impersonating the runtime SA through Workload Identity
-- The `waf-config-mgr` sidecar watches the mount and pushes the bundle to the `waf-enforcer` sidecar
-- The `Policy` CRD (`waf-policy`) in the `nginx-ingress` namespace is what application `VirtualServer` resources reference
+**Routing Flow:**
+- The NGF `Gateway` (namespace `nginx-gateway`) has a single `http` listener on port 80 with `allowedRoutes.namespaces.from: All`
+- Creating the Gateway makes the NGF control plane provision a data plane `Deployment` and a `Service` named `<gateway-name>-nginx` of type `LoadBalancer` in the `nginx-gateway` namespace
+- The app `HTTPRoute` (namespace `comfy-capybara`) attaches to that Gateway via `parentRefs` and routes:
+  - `/api` → `api` service on `8000`, with a `URLRewrite` filter (`ReplacePrefixMatch: /`) that strips the `/api` prefix before forwarding
+  - `/` → `frontend` service on `8080`
 
 **API Protection Flow:**
-- OpenAPI spec at `config/uc2/app/oas/openapi.json` is base64-encoded by the workflow and passed to the XC module as `xc_oas_content`
-- The `volterra_api_definition` resource references it inline (`string:///<base64>`)
+- OpenAPI spec at `config/uc4/app/oas/openapi.json` is uploaded by the workflow to the XC object store via the stored-objects API and referenced by the `volterra_api_definition` resource
 - The `volterra_http_loadbalancer` attaches the api_definition with validation active in report mode and fall-through in report mode by default
 
-Destroy operations run in reverse order: `XC → App → NIC → GKE → Infra → State Bucket`
+Destroy operations run in reverse order: `XC → App → NGF → GKE → Infra → State Bucket`. The infra destroy job sweeps any GKE-managed `k8s-*` / `gke-*` LoadBalancer firewall rules left attached to the VPC before deleting the network.
 
 ---
 
@@ -114,7 +113,7 @@ Destroy operations run in reverse order: `XC → App → NIC → GKE → Infra �
 4. **Workload Identity Pool** configured for GitHub Actions federation
 5. **Sufficient Quotas:**
    - CPUs: 8+ (default GKE node pool is 2× `e2-standard-4`)
-   - External IP addresses: 2+ (NAT + NIC LoadBalancer)
+   - External IP addresses: 2+ (NAT + NGF data plane LoadBalancer)
    - Persistent disk: 100+ GB
 
 #### Hardening: tighter deploy SA IAM (optional)
@@ -130,36 +129,24 @@ The roles above are the simplest set that lets the workflow run end-to-end. For 
 
 #### Runtime SA (attached to GKE nodes)
 
-The runtime SA referenced by `k8s.gcp_runtime_service_account_email` in `config/uc2/gcp/env.json` is the same SA UC1 uses. It carries:
+The runtime SA referenced by `k8s.gcp_runtime_service_account_email` in `config/uc4/gcp/env.json` is the same SA UC1/UC2 use. It carries:
 
 - `roles/logging.logWriter` (GKE node telemetry)
 - `roles/monitoring.metricWriter`
 - `roles/monitoring.viewer`
 - `roles/stackdriver.resourceMetadata.writer`
-- `roles/storage.objectViewer` on the state bucket - already present for UC1's AS3 polling; UC2 reuses it for the NAP bundle GCS Fuse mount
 
-#### Pre-stage Workload Identity binding for the NAP bundle (one-time per project)
+UC4 does not mount anything from GCS into the data plane, so no Workload Identity binding for a bundle reader is required.
 
-The NIC pod impersonates the runtime SA via Workload Identity to mount the NAP bundle from GCS. Bind the WI role on the runtime SA to the cluster KSA principal once:
+### F5 NGINX Plus Requirements
 
-```bash
-PROJECT=<project-id>
-RUNTIME_SA=<runtime-sa>@$PROJECT.iam.gserviceaccount.com
+The NGF NGINX Plus data plane image comes from `private-registry.nginx.com`, which requires a valid NGINX Plus subscription:
 
-gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
-  --role="roles/iam.workloadIdentityUser" \
-  --member="serviceAccount:$PROJECT.svc.id.goog[nginx-ingress/nic-nap-bundle-reader]"
-```
-
-A custom role containing just `iam.serviceAccounts.getAccessToken` works in place of `roles/iam.workloadIdentityUser` for this binding.
-
-### F5 NGINX Plus + NAP V5 Requirements
-
-The NIC + NAP V5 images come from `private-registry.nginx.com`, which requires a valid NGINX Plus subscription:
-
-1. **NGINX JWT Token** - from MyF5 portal, used for chart/image entitlement
+1. **NGINX JWT Token** - from MyF5 portal, used for the license (`nplus-license`) secret and as the registry username
 2. **NGINX Repository Client Certificate** - `nginx-repo.crt` from the subscription bundle
 3. **NGINX Repository Client Key** - `nginx-repo.key` from the subscription bundle
+
+The cluster pulls the Plus data plane image directly using the `nginx-plus-registry-secret` (dockerconfigjson) that Terraform creates from `NGINX_JWT`; the NGF control plane image is public (`ghcr.io`).
 
 ### F5 Distributed Cloud (XC) Requirements
 
@@ -172,9 +159,9 @@ The NIC + NAP V5 images come from `private-registry.nginx.com`, which requires a
 
 1. **Forked Repository** with Actions enabled
 2. **Protected Branches:**
-   - `deploy-adsp-uc2` - triggers validation + deployment
-   - `test-adsp-uc2` - triggers validation only
-   - `destroy-adsp-uc2` - triggers destroy workflow
+   - `deploy-adsp-uc4` - triggers validation + deployment
+   - `test-adsp-uc4` - triggers validation only
+   - `destroy-adsp-uc4` - triggers destroy workflow
 
 ### GitHub Secrets Setup
 
@@ -259,7 +246,7 @@ gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT}" \
 
 ## Quickstart
 
-The minimum edits to get UC2 running, assuming you already have GCP + WIF + F5 entitlements wired up per the Prerequisites section above.
+The minimum edits to get UC4 running, assuming you already have GCP + WIF + F5 entitlements wired up per the Prerequisites section above.
 
 ### `config/common/gcp/env.json`
 
@@ -278,7 +265,7 @@ The minimum edits to get UC2 running, assuming you already have GCP + WIF + F5 e
 - `admin_src_addr` is a JSON array of **quoted CIDR strings** (`IP/prefix`). Bare IPs and unquoted values fail JSON parsing in the workflow.
 - Leave `tf_state_bucket` empty; the workflow derives it as `<project_prefix>-state-bucket`.
 
-### `config/uc2/gcp/env.json`
+### `config/uc4/gcp/env.json`
 
 ```json
 {
@@ -290,19 +277,19 @@ The minimum edits to get UC2 running, assuming you already have GCP + WIF + F5 e
 
 The runtime SA email is the one attached to GKE nodes. Every other field keeps its example default.
 
-### `config/uc2/app/env.json`
+### `config/uc4/app/env.json`
 
 ```json
 {
   "app": {
-    "app_host": "<fqdn-served-by-NIC-and-XC>"
+    "app_host": "<fqdn-served-by-NGF-and-XC>"
   }
 }
 ```
 
 `app_host` must equal `xc_base.app_domain` below.
 
-### `config/uc2/xc/env.json`
+### `config/uc4/xc/env.json`
 
 ```json
 {
@@ -317,19 +304,19 @@ The runtime SA email is the one attached to GKE nodes. Every other field keeps i
 
 `xc_namespace` cannot be `system` or `shared`. `app_domain` must equal `app.app_host`.
 
-### `config/uc2/app/oas/openapi.json`
+### `config/uc4/app/oas/openapi.json`
 
-Drop the OpenAPI spec for the app at `config/uc2/app/oas/openapi.json` (or `openapi.yaml` / `openapi.yml`). The workflow base64-encodes it and feeds it into the XC API definition inline. If the file is missing the XC job fails with a clear message.
+Drop the OpenAPI spec for the app at `config/uc4/app/oas/openapi.json` (or `openapi.yaml` / `openapi.yml`). The workflow uploads it to the XC object store and feeds it into the XC API definition. If the file is missing the XC job fails with a clear message.
 
 ### Deploy
 
 ```bash
-git checkout -b deploy-adsp-uc2 && git push -u origin deploy-adsp-uc2
+git checkout -b deploy-adsp-uc4 && git push -u origin deploy-adsp-uc4
 ```
 
-Watch the workflow in the Actions tab. Modules run: state bucket → infra → GKE → NIC+NAP → app → XC.
+Watch the workflow in the Actions tab. Modules run: state bucket → infra → GKE → NGF → app → XC.
 
-`test-adsp-uc2` runs validate only. `destroy-adsp-uc2` tears down in reverse order.
+`test-adsp-uc4` runs validate only. `destroy-adsp-uc4` tears down in reverse order.
 
 ---
 
@@ -338,39 +325,37 @@ Watch the workflow in the Actions tab. Modules run: state bucket → infra → G
 ```
 F5-ADSP-Automation/
 ├── .github/workflows/
-│   ├── deploy-adsp-uc2-gcp.yml      # Main deployment workflow
-│   ├── destroy-adsp-uc2-gcp.yml     # Destroy workflow
+│   ├── deploy-adsp-uc4-gcp.yml      # Main deployment workflow
+│   ├── destroy-adsp-uc4-gcp.yml     # Destroy workflow
 │   └── pr_tf_validate.yml           # PR validation
 ├── config/
 │   ├── common/
 │   │   └── gcp/env.json             # Shared GCP settings
-│   └── uc2/
-│       ├── gcp/env.json             # UC2 GCP + GKE + NIC config
-│       ├── nap/policy.json          # NAP policy source (compiled in workflow)
+│   └── uc4/
+│       ├── gcp/env.json             # UC4 GCP + GKE + NGF config
 │       ├── app/
-│       │   ├── env.json             # comfy-capybara chart + VirtualServer config
+│       │   ├── env.json             # comfy-capybara chart + route config
 │       │   └── oas/openapi.json     # OpenAPI spec for the app (you drop this)
 │       └── xc/env.json              # XC tenant + LoadBalancer + WAF/API feature flags
 ├── infra/gcp/                       # Network infrastructure
 ├── k8s/gcp/                         # GKE Standard cluster
 ├── f5/
-│   ├── nic/gcp/                     # NIC + NAP V5 helm release
+│   ├── ngf/gcp/                     # NGINX Gateway Fabric (NGINX Plus) + Gateway
 │   └── xc/                          # F5 Distributed Cloud (shared module)
-├── app/gcp/                         # comfy-capybara helm_release + VirtualServer
+├── app/gcp/                         # comfy-capybara helm_release + HTTPRoute
 └── docs/
-    └── ADSP-UC2-GCP.md              # This document
+    └── ADSP-UC4-GCP.md              # This document
 ```
 
 ### Terraform State Layout
 
 Remote state is stored in GCS bucket `${project_prefix}-state-bucket`:
 
-- `state/uc2/infra/` - VPC, subnets, firewall rules
-- `state/uc2/k8s/` - GKE cluster + node pool
-- `state/uc2/nic/` - NIC + NAP Helm release, Secrets, CRDs
-- `state/uc2/app/` - comfy-capybara Helm release, namespace
-- `state/uc2/xc/` - XC namespace, HTTP LoadBalancer, WAF policy, api_definition
-- `artifacts/uc2/` - compiled NAP policy + base64-encoded OAS (uploaded by workflow)
+- `state/uc4/infra/` - VPC, subnets, firewall rules
+- `state/uc4/k8s/` - GKE cluster + node pool
+- `state/uc4/ngf/` - Gateway API CRDs, NGF control plane Helm release, Gateway, secrets
+- `state/uc4/app/` - comfy-capybara Helm release, namespace, HTTPRoute
+- `state/uc4/xc/` - XC namespace, HTTP LoadBalancer, WAF policy, api_definition
 
 ---
 
@@ -405,13 +390,13 @@ Edit `config/common/gcp/env.json`:
 
 ### Step 2: Configure Use-Case Settings
 
-Edit `config/uc2/gcp/env.json`:
+Edit `config/uc4/gcp/env.json`:
 
 ```json
 {
   "features": {
     "gke": true,
-    "nic": true
+    "k8s_ingress": true
   },
   "k8s": {
     "gcp_runtime_service_account_email": "<runtime-sa>@<project-id>.iam.gserviceaccount.com",
@@ -423,18 +408,13 @@ Edit `config/uc2/gcp/env.json`:
     "master_ipv4_cidr_block": "172.16.0.0/28",
     "master_authorized_networks_extra": []
   },
-  "nic": {
-    "namespace": "nginx-ingress",
-    "chart_version": "2.0.1",
-    "nic_image_repository": "private-registry.nginx.com/nginx-ic-nap-v5/nginx-plus-ingress",
-    "nic_image_tag": "4.0.1",
-    "nap_enforcer_image": "private-registry.nginx.com/nap/waf-enforcer",
-    "nap_enforcer_tag": "5.4.0",
-    "nap_config_mgr_image": "private-registry.nginx.com/nap/waf-config-mgr",
-    "nap_config_mgr_tag": "5.4.0",
-    "nic_crds_url": "https://raw.githubusercontent.com/nginx/kubernetes-ingress/v4.0.1/deploy/crds.yaml",
-    "waf_policy_name": "waf-policy",
-    "nap_policy_payload": "../config/uc2/nap/policy.json"
+  "ngf": {
+    "namespace": "nginx-gateway",
+    "chart_version": "2.6.4",
+    "gatewayclass_name": "nginx",
+    "nginx_plus_image_repository": "private-registry.nginx.com/nginx-gateway-fabric/nginx-plus",
+    "nginx_plus_image_tag": "2.6.4",
+    "gateway_api_crds_url": "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml"
   }
 }
 ```
@@ -450,18 +430,17 @@ Edit `config/uc2/gcp/env.json`:
 - `master_ipv4_cidr_block` - control plane private endpoint CIDR (must not overlap with subnets)
 - `master_authorized_networks_extra` - additional CIDRs allowed to reach the control plane on top of `admin_src_addr`
 
-**Customizable Settings (`nic` block):**
-- `chart_version` / `nic_image_tag` - pin specific NIC versions
-- `nap_enforcer_tag` / `nap_config_mgr_tag` - pin NAP V5 sidecar versions (must match `waf-compiler` tag used in the workflow)
-- `nic_crds_url` - pin CRD source to a specific NIC release (must match `nic_image_tag`)
-- `waf_policy_name` - name of the `Policy` CRD that apps reference from their `VirtualServer`
+**Customizable Settings (`ngf` block):**
+- `chart_version` / `nginx_plus_image_tag` - pin specific NGF versions (keep them aligned)
+- `gateway_api_crds_url` - the upstream Gateway API standard-channel CRDs. The version must match what the chart version supports (NGF 2.6.4 → Gateway API v1.5.1).
+- `gatewayclass_name` - the GatewayClass the chart creates and the Gateway references
 
 **Do Not Modify:**
-- `features.gke: true` / `features.nic: true` - required for UC2
+- `features.gke: true` / `features.k8s_ingress: true` - required for UC4. `k8s_ingress` opens the GKE data-plane LoadBalancer ports (80/443) to admin + XC origin ranges.
 
 ### Step 3: Configure App Settings
 
-Edit `config/uc2/app/env.json`:
+Edit `config/uc4/app/env.json`:
 
 ```json
 {
@@ -469,61 +448,41 @@ Edit `config/uc2/app/env.json`:
     "namespace": "comfy-capybara",
     "chart_repository": "oci://ghcr.io/knowbase/charts",
     "chart_name": "comfy-capybara",
-    "chart_version": "0.1.0",
+    "chart_version": "0.4.0",
     "app_host": "comfy.example.com",
     "image_registry": "",
     "image_tag": "",
     "image_pull_secret_name": "",
-    "vs_tls_enabled": false,
-    "vs_tls_secret_name": "",
-    "attach_waf_server_wide": true,
-    "attach_waf_to_api_route": true
+    "route_type": "httproute"
   }
 }
 ```
 
 **Required Changes:**
-- `app_host` - FQDN exposed by the NIC `VirtualServer`. Must equal `xc_base.app_domain` in Step 6.
+- `app_host` - FQDN routed by the `HTTPRoute`. Must equal `xc_base.app_domain` in Step 5.
 
 **Customizable Settings:**
 - `chart_version` - pin a specific chart release published by the comfy-capybara repo
 - `image_registry` / `image_tag` - override the chart's defaults if pulling from a fork or non-`appVersion` tag; empty values fall back to chart defaults
 - `image_pull_secret_name` - name of a pre-created `Secret` in the app namespace for a private registry
-- `vs_tls_enabled` + `vs_tls_secret_name` - terminate TLS at the NIC `VirtualServer`. Defaults off because XC terminates TLS at the edge.
-- `attach_waf_server_wide` - attach `waf-policy` at the `VirtualServer` (covers every route as a baseline)
-- `attach_waf_to_api_route` - attach `waf-policy` on the `/api` route specifically. Route-level policies override server-wide ones; when both are on with the same policy the behavior is "enforce everywhere".
+
+**Do Not Modify:**
+- `route_type: "httproute"` - selects the Gateway API `HTTPRoute` path of the shared app module. `virtualserver` is the UC2 (NIC) path.
 
 ### Step 4: Configure OpenAPI Spec
 
 Drop the OpenAPI spec for the app at one of:
-- `config/uc2/app/oas/openapi.json`
-- `config/uc2/app/oas/openapi.yaml`
-- `config/uc2/app/oas/openapi.yml`
+- `config/uc4/app/oas/openapi.json`
+- `config/uc4/app/oas/openapi.yaml`
+- `config/uc4/app/oas/openapi.yml`
 
-The workflow base64-encodes the file and feeds it into the XC `volterra_api_definition` resource inline (`swagger_specs = ["string:///<base64>"]`). The XC job fails clearly if the file is missing.
+The workflow uploads the file to the XC object store (`stored_objects/swagger/uc4-app-oas`) and references it from the XC `volterra_api_definition`. The XC job fails clearly if the file is missing.
 
 The spec must be valid OpenAPI 3.x. Postman collections and raw Swagger 1.x are not accepted.
 
-### Step 5: Configure NAP Policy
+### Step 5: Configure F5 XC Settings
 
-Edit `config/uc2/nap/policy.json`. The default is a baseline blocking policy on the NGINX template:
-
-```json
-{
-  "policy": {
-    "name": "uc2-baseline",
-    "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
-    "applicationLanguage": "utf-8",
-    "enforcementMode": "blocking"
-  }
-}
-```
-
-The workflow runs `private-registry.nginx.com/nap/waf-compiler:5.4.0` against this file to produce `/tmp/compiled_policy.tgz`. Any policy JSON the compiler accepts is valid; if you change the compiler tag, change the NAP sidecar tags in `config/uc2/gcp/env.json` to match.
-
-### Step 6: Configure F5 XC Settings
-
-Edit `config/uc2/xc/env.json`:
+Edit `config/uc4/xc/env.json`:
 
 ```json
 {
@@ -535,7 +494,7 @@ Edit `config/uc2/xc/env.json`:
     "origin_server": "",
     "origin_port": "80",
     "backend_bigip": false,
-    "backend_nic": true,
+    "backend_k8s_ingress": true,
     "xc_waf_blocking": true
   },
   "xc_features": {
@@ -556,9 +515,9 @@ Edit `config/uc2/xc/env.json`:
 - `app_domain` - Public domain XC will serve. Must equal `app.app_host` in Step 3.
 
 **Important:**
-- `backend_nic: true` - XC origin pool resolves the NIC LoadBalancer IP from `state/uc2/nic` via remote state.
-- `origin_server: ""` - leave empty; resolved automatically from NIC remote state.
-- `xc_api_pro: true` + `xc_api_val_*` + `enforcement_report: true` + `fall_through_mode_report: true` - default UC2 stance is "report everything API-related; block traditional WAF hits via `xc_waf_blocking: true`". Flip `enforcement_block: true` and `fall_through_mode_report: false` if you want OAS enforcement.
+- `backend_k8s_ingress: true` - XC origin pool resolves the NGF data plane LoadBalancer IP from `state/uc4/ngf` via remote state.
+- `origin_server: ""` - leave empty; resolved automatically from NGF remote state.
+- `xc_api_pro: true` + `xc_api_val_*` + `enforcement_report: true` + `fall_through_mode_report: true` - default UC4 stance is "report everything API-related; block traditional WAF hits via `xc_waf_blocking: true`". Flip `enforcement_block: true` and `fall_through_mode_report: false` if you want OAS enforcement.
 - The full set of feature flags is in [f5/xc/variables.tf](../f5/xc/variables.tf).
 
 ---
@@ -570,17 +529,16 @@ Edit `config/uc2/xc/env.json`:
 1. **Fork this repository** to your GitHub organization or account
 2. **Configure files:**
    - `config/common/gcp/env.json`
-   - `config/uc2/gcp/env.json`
-   - `config/uc2/app/env.json`
-   - `config/uc2/app/oas/openapi.json` (or `.yaml` / `.yml`)
-   - `config/uc2/nap/policy.json`
-   - `config/uc2/xc/env.json`
+   - `config/uc4/gcp/env.json`
+   - `config/uc4/app/env.json`
+   - `config/uc4/app/oas/openapi.json` (or `.yaml` / `.yml`)
+   - `config/uc4/xc/env.json`
 3. **Set GitHub Secrets** (see GitHub Secrets Setup)
 4. **Commit and push changes** to `main` branch
 5. **Create deployment branch:**
    ```bash
-   git checkout -b deploy-adsp-uc2
-   git push origin deploy-adsp-uc2
+   git checkout -b deploy-adsp-uc4
+   git push origin deploy-adsp-uc4
    ```
 6. **Monitor workflow execution** in GitHub Actions tab
 7. **Retrieve outputs** (see Accessing Deployment Outputs)
@@ -590,8 +548,8 @@ Edit `config/uc2/xc/env.json`:
 To validate Terraform without applying:
 
 ```bash
-git checkout -b test-adsp-uc2
-git push origin test-adsp-uc2
+git checkout -b test-adsp-uc4
+git push origin test-adsp-uc4
 ```
 
 This triggers validation for all modules but skips `terraform apply` steps.
@@ -599,7 +557,7 @@ This triggers validation for all modules but skips `terraform apply` steps.
 ### Updating Existing Deployment
 
 1. Make configuration changes on `main` branch
-2. Merge or push to `deploy-adsp-uc2` branch
+2. Merge or push to `deploy-adsp-uc4` branch
 3. Workflow will automatically plan and apply changes
 
 ### Destroying Infrastructure
@@ -607,16 +565,16 @@ This triggers validation for all modules but skips `terraform apply` steps.
 **WARNING:** This permanently deletes all resources including the state bucket.
 
 ```bash
-git checkout -b destroy-adsp-uc2
-git push origin destroy-adsp-uc2
+git checkout -b destroy-adsp-uc4
+git push origin destroy-adsp-uc4
 ```
 
 Destroy sequence:
 1. F5 XC resources (HTTP LB, WAF, namespace)
-2. Application workload (comfy-capybara Helm release + namespace)
-3. NIC + NAP Helm release
+2. Application workload (comfy-capybara Helm release + namespace + HTTPRoute)
+3. NGF control plane, Gateway, Gateway API CRDs
 4. GKE cluster
-5. Network infrastructure
+5. Network infrastructure (after sweeping orphaned GKE LoadBalancer firewall rules)
 6. GCS state bucket (including all history)
 
 ---
@@ -633,23 +591,23 @@ PROJECT_PREFIX="your-prefix"
 STATE_BUCKET="${PROJECT_PREFIX}-state-bucket"
 
 # Get GKE cluster name
-gcloud storage cat gs://${STATE_BUCKET}/state/uc2/k8s/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc4/k8s/default.tfstate | \
   jq -r '.outputs.cluster_name.value'
 
-# Get NIC LoadBalancer public IP (XC origin)
-gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
-  jq -r '.outputs.nic_external_ip.value'
+# Get NGF data plane LoadBalancer public IP (XC origin)
+gcloud storage cat gs://${STATE_BUCKET}/state/uc4/ngf/default.tfstate | \
+  jq -r '.outputs.k8s_ingress_external_ip.value'
 
-# Get NIC namespace + WAF policy
-gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
-  jq -r '.outputs.nic_namespace.value, .outputs.waf_policy_name.value'
+# Get NGF namespace + Gateway name
+gcloud storage cat gs://${STATE_BUCKET}/state/uc4/ngf/default.tfstate | \
+  jq -r '.outputs.ngf_namespace.value, .outputs.gateway_name.value'
 
-# Get app FQDN + namespace + VirtualServer name
-gcloud storage cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
-  jq -r '.outputs.app_host.value, .outputs.app_namespace.value, .outputs.virtualserver_name.value'
+# Get app FQDN + namespace
+gcloud storage cat gs://${STATE_BUCKET}/state/uc4/app/default.tfstate | \
+  jq -r '.outputs.app_host.value, .outputs.app_namespace.value'
 
 # Get XC public domain + LB name + WAF policy name
-gcloud storage cat gs://${STATE_BUCKET}/state/uc2/xc/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc4/xc/default.tfstate | \
   jq -r '.outputs.endpoint.value, .outputs.xc_lb_name.value, .outputs.xc_waf_name.value'
 ```
 
@@ -658,7 +616,7 @@ gcloud storage cat gs://${STATE_BUCKET}/state/uc2/xc/default.tfstate | \
 ```bash
 PROJECT_ID="your-gcp-project-id"
 ZONE="your-gcp-zone"
-CLUSTER_NAME=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/k8s/default.tfstate | \
+CLUSTER_NAME=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc4/k8s/default.tfstate | \
   jq -r '.outputs.cluster_name.value')
 
 gcloud container clusters get-credentials "${CLUSTER_NAME}" \
@@ -671,12 +629,11 @@ gcloud container clusters get-credentials "${CLUSTER_NAME}" \
 |--------|--------|-------------|
 | `cluster_name` | k8s | GKE cluster name |
 | `cluster_endpoint` | k8s | GKE control plane endpoint |
-| `nic_namespace` | nic | Namespace hosting NIC and the WAF Policy CRD |
-| `nic_external_ip` | nic | NIC LoadBalancer public IP (XC origin) |
-| `waf_policy_name` | nic | Policy CRD name apps reference |
-| `app_host` | app | FQDN exposed by the NIC `VirtualServer` |
+| `ngf_namespace` | ngf | Namespace hosting NGF and the Gateway |
+| `gateway_name` | ngf | Gateway name (apps reference it from HTTPRoute parentRefs) |
+| `k8s_ingress_external_ip` | ngf | NGF data plane LoadBalancer public IP (XC origin) |
+| `app_host` | app | FQDN routed by the `HTTPRoute` |
 | `app_namespace` | app | Namespace the comfy-capybara workload runs in |
-| `virtualserver_name` | app | VirtualServer CRD emitted by the chart |
 | `endpoint` | xc | XC application domain (public URL) |
 | `xc_lb_name` | xc | XC HTTP LoadBalancer resource name |
 | `xc_waf_name` | xc | XC WAF policy resource name |
@@ -695,66 +652,61 @@ kubectl get nodes
 kubectl get ns
 ```
 
-### NIC + NAP Pod Status
+### NGF Control Plane + Data Plane Status
 
 ```bash
-NIC_NS=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
-  jq -r '.outputs.nic_namespace.value')
+NGF_NS=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc4/ngf/default.tfstate | \
+  jq -r '.outputs.ngf_namespace.value')
 
-# Three containers per NIC pod: nginx-ingress, waf-enforcer, waf-config-mgr
-kubectl -n "${NIC_NS}" get pods -o wide
-kubectl -n "${NIC_NS}" get svc
-kubectl -n "${NIC_NS}" get policies
+# Control plane Deployment + provisioned data plane (<gateway>-nginx)
+kubectl -n "${NGF_NS}" get pods -o wide
+kubectl -n "${NGF_NS}" get svc
+kubectl -n "${NGF_NS}" get gateways
+kubectl -n "${NGF_NS}" get gatewayclasses
 
-# Tail logs
-kubectl -n "${NIC_NS}" logs -l app.kubernetes.io/name=nginx-ingress -c nginx-ingress --tail=100
-kubectl -n "${NIC_NS}" logs -l app.kubernetes.io/name=nginx-ingress -c waf-config-mgr --tail=100
-kubectl -n "${NIC_NS}" logs -l app.kubernetes.io/name=nginx-ingress -c waf-enforcer  --tail=100
+# Gateway should report PROGRAMMED=True and an address
+kubectl -n "${NGF_NS}" describe gateway
+
+# Tail control plane logs
+kubectl -n "${NGF_NS}" logs -l app.kubernetes.io/name=nginx-gateway-fabric --tail=100
 ```
 
 ### Application Workload Status
 
 ```bash
-APP_NS=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
+APP_NS=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc4/app/default.tfstate | \
   jq -r '.outputs.app_namespace.value')
 
 kubectl -n "${APP_NS}" get pods
 kubectl -n "${APP_NS}" get svc
-kubectl -n "${APP_NS}" get virtualservers
-kubectl -n "${APP_NS}" describe virtualserver
+kubectl -n "${APP_NS}" get httproutes
+kubectl -n "${APP_NS}" describe httproute
 ```
+
+The HTTPRoute should show `Accepted=True` and `ResolvedRefs=True` against the Gateway.
 
 ### Application Reachability
 
 ```bash
-NIC_IP=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
-  jq -r '.outputs.nic_external_ip.value')
-APP_HOST=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
+NGF_IP=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc4/ngf/default.tfstate | \
+  jq -r '.outputs.k8s_ingress_external_ip.value')
+APP_HOST=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc4/app/default.tfstate | \
   jq -r '.outputs.app_host.value')
 
-# Through NIC LoadBalancer directly (Host header drives VirtualServer match)
-curl -H "Host: ${APP_HOST}" "http://${NIC_IP}/"
-curl -H "Host: ${APP_HOST}" "http://${NIC_IP}/api/healthz"
+# Through the NGF data plane LoadBalancer directly (Host header drives HTTPRoute match)
+curl -H "Host: ${APP_HOST}" "http://${NGF_IP}/"
+curl -H "Host: ${APP_HOST}" "http://${NGF_IP}/api/healthz"
 
 # Through XC (public domain)
 curl "https://${APP_HOST}/"
 curl "https://${APP_HOST}/api/healthz"
 ```
 
-Without a matching `Host` header NIC returns 404; that's expected.
+Without a matching `Host` header the Gateway returns 404; that's expected.
 
-### NAP Policy Enforcement Smoke Test
+### XC WAF Smoke Test
 
-With `attach_waf_server_wide=true` (default), a SQLi-style probe should be blocked at NIC by NAP:
-
-```bash
-curl -i -H "Host: ${APP_HOST}" "http://${NIC_IP}/api/users?id=1%20OR%201=1"
-
-# Tail enforcer logs live
-kubectl -n "${NIC_NS}" logs -l app.kubernetes.io/name=nginx-ingress -c waf-enforcer --tail=50 -f
-```
-
-XC WAF blocks the same probe at the edge in blocking mode:
+UC4 has no in-cluster WAF; protection is provided by XC. With `xc_waf_blocking: true`, XC blocks a SQLi-style probe at the edge:
 
 ```bash
 curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
@@ -767,7 +719,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 3. Navigate to: `Multi-Cloud App Connect → HTTP Load Balancers` in the configured namespace
 4. The LoadBalancer should show:
    - **Domain** matching `app_domain` (and the `endpoint` output)
-   - **Origin Pool** with one origin server matching the NIC LoadBalancer public IP
+   - **Origin Pool** with one origin server matching the NGF data plane LoadBalancer public IP
    - **WAF** attached, in blocking or monitoring mode per `xc_waf_blocking`
    - **API Definition** attached with active validation in report mode
 5. Send live traffic and check `Security → Security Events` for WAF activity, validation reports, and fall-through reports.
@@ -798,7 +750,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 **Error:** `The user does not have access to service account <runtime-sa>`
 
 **Resolution:**
-- The deploy SA needs `roles/iam.serviceAccountUser` on the runtime SA email set in `config/uc2/gcp/env.json` (`k8s.gcp_runtime_service_account_email`)
+- The deploy SA needs `roles/iam.serviceAccountUser` on the runtime SA email set in `config/uc4/gcp/env.json` (`k8s.gcp_runtime_service_account_email`)
 - Bind on the runtime SA only, not project-wide
 
 ### Remote State Errors
@@ -818,8 +770,8 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 - Wait for concurrent run to complete
 - If stuck, manually remove lock:
   ```bash
-  gcloud storage ls gs://${STATE_BUCKET}/state/uc2/MODULE_NAME/default.tflock
-  gcloud storage rm gs://${STATE_BUCKET}/state/uc2/MODULE_NAME/default.tflock
+  gcloud storage ls gs://${STATE_BUCKET}/state/uc4/MODULE_NAME/default.tflock
+  gcloud storage rm gs://${STATE_BUCKET}/state/uc4/MODULE_NAME/default.tflock
   ```
 
 ### Configuration Errors
@@ -830,67 +782,54 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 - Your `admin_src_addr` (or another CIDR/list field) has unquoted values
 - JSON requires `["1.2.3.4/32"]`, not `[1.2.3.4/32]`
 
-**Error:** XC job fails with `No OAS spec found at config/uc2/app/oas/...`
+**Error:** XC job fails with `No OAS spec found at config/uc4/app/oas/...`
 
 **Resolution:**
-- Drop your OpenAPI spec at `config/uc2/app/oas/openapi.json` (or `.yaml` / `.yml`) and re-run
+- Drop your OpenAPI spec at `config/uc4/app/oas/openapi.json` (or `.yaml` / `.yml`) and re-run
 
 ### GKE Control Plane Unreachable
 
-**Error:** `Error: Get "https://...": dial tcp ...:443: i/o timeout` during NIC apply
+**Error:** `Error: Get "https://...": dial tcp ...:443: i/o timeout` during NGF or App apply
 
 **Resolution:**
 - GKE control plane is private; the runner reaches it via authorized networks
-- Confirm `admin_src_addr` in `config/common/gcp/env.json` includes the runner's egress IPs, or use `master_authorized_networks_extra` in `config/uc2/gcp/env.json` to add GitHub Actions hosted-runner egress ranges
+- Confirm `admin_src_addr` in `config/common/gcp/env.json` includes the runner's egress IPs, or use `master_authorized_networks_extra` in `config/uc4/gcp/env.json` to add GitHub Actions hosted-runner egress ranges
 
-### NIC Pods CrashLoopBackOff (Image Pull)
+### NGF Pods CrashLoopBackOff (Image Pull)
 
-**Error:** `ErrImagePull` or `ImagePullBackOff` on NIC or NAP sidecar containers
-
-**Resolution:**
-- The `NGINX_REPO_CRT` / `NGINX_REPO_KEY` secrets must match the certificate associated with your active NGINX Plus subscription
-- Verify the docker certs install step succeeded in the workflow log
-- Sanity-check the secret content has no truncation or extra whitespace
-- Confirm `nic_image_tag` and NAP sidecar tags exist at `private-registry.nginx.com`
-
-### NAP Compiler Failures
-
-**Error:** Workflow step `Compile NAP policy` exits non-zero
+**Error:** `ErrImagePull` or `ImagePullBackOff` on the `<gateway>-nginx` data plane pods
 
 **Resolution:**
-- The compiler image (`private-registry.nginx.com/nap/waf-compiler:5.4.0`) requires the same docker cert install that NIC images use
-- Run the compiler locally with the same policy.json to surface the schema error:
-  ```bash
-  docker run --rm \
-    -v "$(pwd)/config/uc2/nap:/policy:ro" \
-    -v "$(pwd):/output" \
-    private-registry.nginx.com/nap/waf-compiler:5.4.0 \
-    -p /policy/policy.json -o /output/compiled_policy.tgz
-  ```
-- The compiler version (`5.4.0`) must match `nap_enforcer_tag` and `nap_config_mgr_tag` in `config/uc2/gcp/env.json`
+- The `NGINX_REPO_CRT` / `NGINX_REPO_KEY` / `NGINX_JWT` secrets must match your active NGINX Plus subscription
+- Terraform creates `nginx-plus-registry-secret` and `nplus-license` in the `nginx-gateway` namespace from `NGINX_JWT`; confirm they exist: `kubectl -n nginx-gateway get secret`
+- Confirm `nginx_plus_image_tag` exists at `private-registry.nginx.com/nginx-gateway-fabric/nginx-plus`
 
-### Application Pod Issues
+### Gateway Not Programmed / No Address
 
-**Error:** `ImagePullBackOff` on `comfy-capybara-*` pods
+**Error:** `kubectl -n nginx-gateway describe gateway` shows `PROGRAMMED=False` or no address
 
 **Resolution:**
-- Images default to `ghcr.io/knowbase/comfy-capybara-{api,internal-mock,shadow-api,frontend}:<chart appVersion>`. If you forked the comfy-capybara repo, set `image_registry` in `config/uc2/app/env.json` to your fork's GHCR namespace.
-- Private images need `image_pull_secret_name` to point at a pre-created `Secret` in the app namespace.
+- Confirm the Gateway API CRDs installed: `kubectl get crd | grep gateway.networking.k8s.io`. The version must match what the chart supports (NGF 2.6.4 → Gateway API v1.5.1, set by `gateway_api_crds_url`).
+- Confirm the `nginx` GatewayClass exists and is Accepted: `kubectl get gatewayclass`
+- Check control plane logs: `kubectl -n nginx-gateway logs -l app.kubernetes.io/name=nginx-gateway-fabric`
 
-**Error:** `VirtualServer` shows `Policy not found` or NAP isn't enforcing
+### HTTPRoute Not Attaching
 
-**Resolution:**
-- The chart's VirtualServer references `waf-policy` cross-namespace in `nginx-ingress`. Confirm `kubectl -n nginx-ingress get policies` shows the policy.
-- If both `attach_waf_server_wide` and `attach_waf_to_api_route` are false, the VirtualServer ships without policy refs; flip at least one to `true`.
-
-### NIC LoadBalancer Pending External IP
-
-**Error:** `kubectl get svc -n nginx-ingress` shows `EXTERNAL-IP: <pending>` for minutes
+**Error:** `kubectl -n comfy-capybara describe httproute` shows `Accepted=False` (NotAllowedByListeners)
 
 **Resolution:**
-- GKE provisions the LoadBalancer via a target pool; confirm the node pool is healthy: `kubectl get nodes`
-- Check GCP regional quota for forwarding rules
-- Inspect Service events: `kubectl -n nginx-ingress describe svc`
+- The Gateway listener must allow routes from the app namespace. UC4 sets `allowedRoutes.namespaces.from: All` on the `http` listener; confirm it wasn't overridden.
+- Confirm the HTTPRoute `parentRefs` name/namespace/`sectionName: http` match the Gateway. The app module reads these from `state/uc4/ngf`.
+
+### NGF Data Plane LoadBalancer Pending / `k8s_ingress_external_ip` Empty
+
+**Error:** The NGF apply finishes but `k8s_ingress_external_ip` is null, or the XC job reports an empty origin
+
+**Resolution:**
+- The data plane Service and its LoadBalancer IP are provisioned asynchronously after the Gateway is accepted. The NGF module waits (`time_sleep` 180s) before reading the Service, but GCP LoadBalancer IP assignment can occasionally exceed that.
+- Re-run the `Terraform: NGF` job (push an empty commit to `deploy-adsp-uc4`); on the second pass the Service already has its IP.
+- Confirm the Service exists and has an external IP: `kubectl -n nginx-gateway get svc`
+- Check GCP regional quota for forwarding rules.
 
 ### XC Provider Errors
 
@@ -906,21 +845,21 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 **Resolution:**
 - Verify `VES_P12_CONTENT` is correctly base64-encoded
 - Test decoding: `echo $VES_P12_CONTENT | base64 -d > test.p12`
-- Verify `api_url` in `config/uc2/xc/env.json` matches the tenant
+- Verify `api_url` in `config/uc4/xc/env.json` matches the tenant
 - Check API certificate is not expired in XC console
 
 ### XC Origin Shows Down / 502 from Public URL
 
 **Resolution:**
-- Confirm `backend_nic: true` is set in `config/uc2/xc/env.json` so XC picks up the NIC IP from `state/uc2/nic`.
-- Confirm the NIC LoadBalancer Service has an external IP (see [NIC LoadBalancer Pending External IP](#nic-loadbalancer-pending-external-ip)).
-- The `app_domain` in `config/uc2/xc/env.json` must equal the `app_host` in `config/uc2/app/env.json`. If they drift, XC forwards a Host header NIC's `VirtualServer` won't match and the origin looks healthy while the app is unreachable through XC.
-- Direct-to-NIC reachability must work before XC will look healthy.
+- Confirm `backend_k8s_ingress: true` is set in `config/uc4/xc/env.json` so XC picks up the NGF data plane IP from `state/uc4/ngf`.
+- Confirm the data plane Service has an external IP (see the pending-LoadBalancer entry above).
+- The `app_domain` in `config/uc4/xc/env.json` must equal the `app_host` in `config/uc4/app/env.json`. If they drift, XC forwards a Host header the `HTTPRoute` won't match and the origin looks healthy while the app is unreachable through XC.
+- Direct-to-data-plane reachability must work before XC will look healthy.
 
 ### XC API Definition Apply Fails
 
 **Resolution:**
-- Confirm the OAS file under `config/uc2/app/oas/` parses as valid OpenAPI 3.x. Postman collections and raw Swagger 1.x are not accepted.
+- Confirm the OAS file under `config/uc4/app/oas/` parses as valid OpenAPI 3.x. Postman collections and raw Swagger 1.x are not accepted.
 
 ### Quota Exceeded Errors
 
@@ -928,7 +867,15 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 
 **Resolution:**
 - Request quota increase in GCP Console: `IAM & Admin → Quotas`
-- Reduce `node_machine_type` or `node_count` in `config/uc2/gcp/env.json`
+- Reduce `node_machine_type` or `node_count` in `config/uc4/gcp/env.json`
+
+### VPC Delete Blocked by Orphaned Firewall (destroy)
+
+**Error:** `The network resource '...' is already being used by '.../firewalls/k8s-...-node-http-hc'`
+
+**Resolution:**
+- These are GKE-managed LoadBalancer firewall rules left behind when a `LoadBalancer` Service is reaped after the cluster is deleted.
+- The infra destroy job sweeps `k8s-*` / `gke-*` firewalls on the VPC before deleting the network. If a run predates that step, re-push `destroy-adsp-uc4` to re-run the infra job.
 
 ---
 
@@ -949,7 +896,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 - **Use meaningful `project_prefix`** values to avoid naming collisions
 - **Tag resources** using `resource_owner` for cost tracking
 - **Version control all changes** to configuration files
-- **Test changes** on `test-adsp-uc2` branch before deploying
+- **Test changes** on `test-adsp-uc4` branch before deploying
 
 ### State Management
 
@@ -957,7 +904,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 - **Enable versioning** on state bucket (auto-enabled by workflow)
 - **Back up state** before major changes:
   ```bash
-  gcloud storage -m cp -r gs://${STATE_BUCKET}/state/uc2 gs://backup-bucket/state-uc2-$(date +%Y%m%d)
+  gcloud storage -m cp -r gs://${STATE_BUCKET}/state/uc4 gs://backup-bucket/state-uc4-$(date +%Y%m%d)
   ```
 - **Clean up old state** after successful destroys
 
@@ -989,7 +936,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 
 ## Cost Estimates
 
-Estimated monthly costs for `us-west1` region (as of 2026, defaults from `config/uc2/gcp/env.example.json`):
+Estimated monthly costs for `us-west1` region (as of 2026, defaults from `config/uc4/gcp/env.example.json`):
 
 | Component | Instance Type | Hours/Month | Est. Cost/Month |
 |-----------|---------------|-------------|-----------------|
@@ -997,10 +944,10 @@ Estimated monthly costs for `us-west1` region (as of 2026, defaults from `config
 | Node pool (2× e2-standard-4) | e2-standard-4 | 730 | ~$200 |
 | Node boot disks (2× 50 GB pd-balanced) | pd-balanced | 730 | ~$10 |
 | Cloud NAT | - | 730 | ~$33 |
-| External IPs (NAT + NIC LB) | Standard | 730 | ~$15 |
+| External IPs (NAT + NGF data plane LB) | Standard | 730 | ~$15 |
 | Network Egress | Variable | - | ~$10 |
 | **Total (GCP)** | | | **~$340/month** |
-| F5 NGINX Plus + NAP V5 | - | - | Contact F5 Sales |
+| F5 NGINX Plus | - | - | Contact F5 Sales |
 | F5 Distributed Cloud | - | - | Contact F5 Sales |
 
 **Cost Reduction Options:**
@@ -1017,9 +964,9 @@ Estimated monthly costs for `us-west1` region (as of 2026, defaults from `config
 
 ### F5 Documentation
 
-- [F5 NGINX Ingress Controller](https://docs.nginx.com/nginx-ingress-controller/)
-- [F5 NGINX App Protect V5](https://docs.nginx.com/nginx-app-protect-waf/v5/)
-- [NAP Policy Authoring](https://docs.nginx.com/nginx-app-protect-waf/v5/configuration/policy-overview/)
+- [F5 NGINX Gateway Fabric](https://docs.nginx.com/nginx-gateway-fabric/)
+- [NGF Install with NGINX Plus](https://docs.nginx.com/nginx-gateway-fabric/install/nginx-plus/)
+- [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/)
 - [F5 Distributed Cloud Documentation](https://docs.cloud.f5.com/)
 
 ### GCP Documentation
@@ -1060,6 +1007,6 @@ For questions about F5 products, consult official F5 documentation or contact F5
 
 ## License
 
-This project uses F5 NGINX Plus + NAP V5 (subscription-based) and F5 Distributed Cloud services (separate billing). Review F5 licensing terms before deployment.
+This project uses F5 NGINX Plus (subscription-based) and F5 Distributed Cloud services (separate billing). Review F5 licensing terms before deployment.
 
 Terraform modules and configuration are provided as-is for demonstration purposes.

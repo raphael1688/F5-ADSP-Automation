@@ -1,7 +1,7 @@
 locals {
-  infra = data.terraform_remote_state.infra.outputs
-  k8s   = data.terraform_remote_state.k8s.outputs
-  nic   = data.terraform_remote_state.nic.outputs
+  infra       = data.terraform_remote_state.infra.outputs
+  k8s         = data.terraform_remote_state.k8s.outputs
+  k8s_ingress = data.terraform_remote_state.k8s_ingress.outputs
 
   project_prefix = local.infra.project_prefix
   resource_owner = local.infra.resource_owner
@@ -12,13 +12,18 @@ locals {
 
   release_name = var.release_name != "" ? var.release_name : format("%s-comfy-%s", local.project_prefix, local.build_suffix)
 
+  # waf_policy_* exist only in NIC state; absent when the backend is NGF.
   waf_policy_ref = {
-    name      = local.nic.waf_policy_name
-    namespace = local.nic.waf_policy_namespace
+    name      = try(local.k8s_ingress.waf_policy_name, "")
+    namespace = try(local.k8s_ingress.waf_policy_namespace, "")
   }
 
   server_wide_policies = var.attach_waf_server_wide ? [local.waf_policy_ref] : []
   api_route_policies   = var.attach_waf_to_api_route ? [local.waf_policy_ref] : []
+
+  # gateway_* exist only in NGF state; consumed by the HTTPRoute parentRef.
+  gateway_name      = try(local.k8s_ingress.gateway_name, "")
+  gateway_namespace = try(local.k8s_ingress.gateway_namespace, "")
 
   image_block = merge(
     { pullPolicy = "IfNotPresent" },

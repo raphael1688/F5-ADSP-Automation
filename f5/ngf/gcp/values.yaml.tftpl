@@ -1,0 +1,14 @@
+nginxGateway:
+  gatewayClassName: ${gatewayclass_name}
+
+nginx:
+  plus: true
+  image:
+    repository: ${nginx_plus_image_repository}
+    tag: "${nginx_plus_image_tag}"
+    pullPolicy: IfNotPresent
+  imagePullSecret: ${regcred_secret_name}
+  usage:
+    secretName: ${license_secret_name}
+  service:
+    type: LoadBalancer

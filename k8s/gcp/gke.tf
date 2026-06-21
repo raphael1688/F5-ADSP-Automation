@@ -71,7 +71,7 @@ resource "google_container_node_pool" "primary" {
 
     service_account = var.node_service_account != "" ? var.node_service_account : null
 
-    tags = [local.tag_nic_ext]
+    tags = [local.tag_k8s_ext]
 
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",

@@ -109,10 +109,8 @@ jobs:
             admin_src_addr,
 
             # feature flags expected by infra variables.tf
-            nap: ( .features.nap // false ),
-            nic: ( .features.nginx_ingress_controller // false ),
-            bigip: ( .features.bigip // false ),
-            "bigip_cis": ( .features.bigip_cis // false )
+            k8s_ingress: ( .features.nginx_ingress_controller // false ),
+            bigip: ( .features.bigip // false )
           }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
 
       - name: Auth to Google Cloud (WIF)
