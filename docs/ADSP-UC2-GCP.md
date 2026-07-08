@@ -370,7 +370,9 @@ Edit `config/common/gcp/env.json`:
 - `gcp_region` - Target GCP region
 - `gcp_zone` - Target GCP zone (must be inside `gcp_region`; GKE cluster is zonal)
 - `project_prefix` - Unique prefix for resource naming (lowercase, alphanumeric)
-- `resource_owner` - Your initials or identifier for resource tagging
+- `resource_owner` - Your initials or identifier for resource tagging. **NOTE:** GCP format constraints require:<br>
+   - only contain lowercase letters, numeric characters, underscores and dashes
+   - max 63 characters  
 - `admin_src_addr` - Public IP CIDRs allowed to reach management interfaces and the GKE control plane. Each entry is a quoted CIDR (`/32` for a single host); bare IPs and unquoted values fail JSON parsing.
 
 **Leave as-is:**
