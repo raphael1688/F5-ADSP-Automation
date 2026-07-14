@@ -97,6 +97,7 @@ jobs:
 
             api_url: .xc_base.api_url,
             xc_namespace: .xc_base.xc_namespace,
+            create_namespace: false,
             app_domain: .xc_base.app_domain,
 
             origin_server: (.xc_base.origin_server // ""),
@@ -186,6 +187,80 @@ jobs:
 
       - name: Terraform Destroy
         run: terraform destroy -auto-approve -input=false -var-file=/tmp/xc.tfvars.json
+
+      - name: Delete OAS stored object
+        shell: bash
+        run: |
+          set -euo pipefail
+          UC_XC="$GITHUB_WORKSPACE/config/uc4/xc/env.json"
+          API_URL=$(jq -r .xc_base.api_url "$UC_XC")
+          NS=$(jq -r .xc_base.xc_namespace "$UC_XC")
+          NAME="uc4-app-oas"
+
+          echo "$VES_P12_CONTENT" | base64 -d > /tmp/api.p12
+          openssl pkcs12 -legacy -in /tmp/api.p12 -out /tmp/api.pem \
+            -nodes -passin "pass:$VES_P12_PASSWORD"
+
+          HTTP_STATUS=$(curl -sS -o /tmp/oas_delete_response.json -w '%{http_code}' -X DELETE \
+            --cert /tmp/api.pem --key /tmp/api.pem \
+            "${API_URL}/object_store/namespaces/${NS}/stored_objects/swagger/${NAME}")
+
+          if [ "$HTTP_STATUS" -ge 400 ] && [ "$HTTP_STATUS" -ne 404 ]; then
+            echo "OAS stored object delete failed with HTTP $HTTP_STATUS:" >&2
+            cat /tmp/oas_delete_response.json >&2
+            exit 1
+          fi
+
+          rm -f /tmp/api.p12 /tmp/api.pem
+
+      - name: Delete XC namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          UC_XC="$GITHUB_WORKSPACE/config/uc4/xc/env.json"
+          API_URL=$(jq -r .xc_base.api_url "$UC_XC")
+          NS=$(jq -r .xc_base.xc_namespace "$UC_XC")
+          CREATE_NS=$(jq -r '.xc_base.create_namespace // true' "$UC_XC")
+
+          if [ "$CREATE_NS" != "true" ]; then
+            echo "create_namespace is false; leaving namespace $NS in place."
+            exit 0
+          fi
+
+          echo "$VES_P12_CONTENT" | base64 -d > /tmp/api.p12
+          openssl pkcs12 -legacy -in /tmp/api.p12 -out /tmp/api.pem \
+            -nodes -passin "pass:$VES_P12_PASSWORD"
+
+          INV_BODY=$(jq -n --arg ns "$NS" '{namespace: $ns}')
+          INV_RESPONSE=$(curl -sS --cert /tmp/api.pem --key /tmp/api.pem \
+            -H "Content-Type: application/json" \
+            -d "$INV_BODY" \
+            "${API_URL}/config/namespaces/${NS}/application_inventory")
+
+          LBS=$(echo "$INV_RESPONSE" | jq -r '.loadbalancers // 0')
+          POOLS=$(echo "$INV_RESPONSE" | jq -r '.origin_pools // 0')
+          SVCS=$(echo "$INV_RESPONSE" | jq -r '.services_discovered // 0')
+
+          if [ "$LBS" != "0" ] || [ "$POOLS" != "0" ] || [ "$SVCS" != "0" ]; then
+            echo "Namespace $NS is not empty (loadbalancers=$LBS, origin_pools=$POOLS, services_discovered=$SVCS); refusing to delete." >&2
+            echo "$INV_RESPONSE" >&2
+            exit 1
+          fi
+
+          NS_BODY=$(jq -n --arg name "$NS" '{name: $name}')
+          NS_HTTP_STATUS=$(curl -sS -o /tmp/ns_delete_response.json -w '%{http_code}' -X POST \
+            --cert /tmp/api.pem --key /tmp/api.pem \
+            -H "Content-Type: application/json" \
+            -d "$NS_BODY" \
+            "${API_URL}/web/namespaces/${NS}/cascade_delete")
+
+          if [ "$NS_HTTP_STATUS" -ge 400 ] && [ "$NS_HTTP_STATUS" -ne 404 ]; then
+            echo "XC namespace cascade_delete failed with HTTP $NS_HTTP_STATUS:" >&2
+            cat /tmp/ns_delete_response.json >&2
+            exit 1
+          fi
+
+          rm -f /tmp/api.p12 /tmp/api.pem
 
   terraform_app_destroy:
     name: "Destroy: App"

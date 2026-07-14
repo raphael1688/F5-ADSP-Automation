@@ -10,8 +10,8 @@ locals {
     var.app_server_ip
   ) : var.app_server_ip
 
-  asle_ip = var.backend_compute ? try(
-    data.terraform_remote_state.compute[0].outputs.asle_internal_ip, ""
+  asle_ip = var.backend_asle_base ? try(
+    data.terraform_remote_state.asle_base[0].outputs.asle_internal_ip, ""
   ) : ""
 
   bigip_internal_ip = var.backend_bigip_base ? try(
