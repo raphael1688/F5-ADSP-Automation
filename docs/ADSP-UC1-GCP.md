@@ -17,34 +17,8 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ F5 Distributed Cloud (XC)                                   │
-│ ├─ HTTP Load Balancer                                       │
-│ ├─ WAF Policy                                               │
-│ └─ Origin: BIG-IP Public IP                                 │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ GCP VPC (crafty-vpc-*)                                      │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ F5 BIG-IP (Single-NIC)                               │  │
-│  │ ├─ Management GUI/SSH (Public IP)                    │  │
-│  │ ├─ AS3 Configuration (AWAF)                          │  │
-│  │ └─ Pool Members: Juice Shop, crAPI                   │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                              │                              │
-│                              ▼                              │
-│  ┌────────────────────┐  ┌────────────────────┐           │
-│  │ Juice Shop VM      │  │ crAPI VM           │           │
-│  │ (Docker)           │  │ (Docker)           │           │
-│  └────────────────────┘  └────────────────────┘           │
-│                                                             │
-│  Subnets: mgmt (/24), ext (/18), int (/18), app (/18)     │
-└─────────────────────────────────────────────────────────────┘
-```
+<img width="2199" height="2064" alt="Architectures-V1 - UC1" src="https://github.com/user-attachments/assets/77f87b5c-7014-490f-98c9-88b49438c000" />
+
 
 ### Deployment Flow
 
@@ -336,7 +310,9 @@ Edit `config/common/gcp/env.json`:
 - `gcp_region` - Target GCP region
 - `gcp_zone` - Target GCP zone (must be in specified region)
 - `project_prefix` - Unique prefix for resource naming (lowercase, no special chars)
-- `resource_owner` - Your initials or identifier for resource tagging
+- `resource_owner` - Your initials or identifier for resource tagging. **NOTE:** GCP format constraints require:<br>
+   - only contain lowercase letters, numeric characters, underscores and dashes
+   - max 63 characters  
 - `admin_src_addr` - Your public IP address for management access (array format)
 
 **Leave as-is:**

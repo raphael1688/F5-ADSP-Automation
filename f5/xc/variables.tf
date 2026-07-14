@@ -430,3 +430,9 @@ variable "xc_byo_cert_namespace" {
   description = "Namespace of the referenced volterra_certificate."
   default     = "shared"
 }
+
+variable "create_namespace" {
+  type        = bool
+  default     = true
+  description = "Whether to create the XC namespace or use an existing one"
+}

@@ -1,9 +1,14 @@
 # loadbalancer.tf
 
+locals {
+  # This forces a dependency on the namespace resource ONLY when it's created.
+  namespace_name = var.create_namespace ? volterra_namespace.this[0].name : var.xc_namespace
+}
+
 resource "volterra_origin_pool" "op" {
   depends_on  = [volterra_namespace.this]
   name        = format("%s-xcop-%s", local.project_prefix, local.build_suffix)
-  namespace   = var.xc_namespace
+  namespace   = local.namespace_name
   description = format("Origin pool pointing to origin server %s", local.origin_server)
 
   dynamic "origin_servers" {
@@ -39,7 +44,7 @@ resource "volterra_http_loadbalancer" "lb_https" {
   ]
 
   name      = format("%s-xclb-%s", local.project_prefix, local.build_suffix)
-  namespace = var.xc_namespace
+  namespace = local.namespace_name
 
   labels = merge(
     {},
