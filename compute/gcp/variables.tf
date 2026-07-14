@@ -9,12 +9,6 @@ variable "gcp_region" {
   default = "us-west1"
 }
 
-variable "gcp_zone" {
-  type        = string
-  description = "GCP zone for the docker host (e.g., us-west1-a)"
-  default = "us-west1-a"
-}
-
 variable "gcp_runtime_service_account_email" {
   type        = string
   description = "Email of the service account used by the runtime"
@@ -56,27 +50,9 @@ variable "enable_oslogin" {
   default     = false
 }
 
-variable "install_docker_compose" {
-  type        = bool
-  description = "Install docker compose plugin v2 on the host"
-  default     = true
-}
-
-variable "enable_artifact_registry_pull" {
-  type        = bool
-  description = "Grant Artifact Registry Reader to the instance service account"
-  default     = false
-}
-
 variable "additional_network_tag" {
   type        = string
   description = "Optional additional network tag for firewall targeting"
-  default     = ""
-}
-
-variable "extra_startup_script" {
-  type        = string
-  description = "Optional shell script content executed after Docker is installed (base64 passed to startup)"
   default     = ""
 }
 
@@ -87,13 +63,13 @@ variable "ssh_pub" {
 }
 
 variable "vm_create_crapi" {
-  description = "If set to true, the example resource will be created."
+  description = "Provision the crAPI docker host."
   type        = bool
   default     = false
 }
 
 variable "vm_create_juice_shop" {
-  description = "If set to true, the example resource will be created."
+  description = "Provision the Juice Shop docker host."
   type        = bool
   default     = false
 }

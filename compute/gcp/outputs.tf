@@ -1,11 +1,3 @@
-output "instance_name_js" {
-  value = "juice shop names: ${try(google_compute_instance.docker_host["juice-shop"].name, "not set")}"
-}
-
-output "instance_name_cr" {
-  value = "crapi names: ${try(google_compute_instance.docker_host["crapi"].name, "not set")}"
-}
-
 output "juice_shop_internal_ip" {
   value = try(google_compute_instance.docker_host["juice-shop"].network_interface[0].network_ip, "")
 }

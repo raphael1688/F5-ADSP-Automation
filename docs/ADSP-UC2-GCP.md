@@ -27,7 +27,7 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 │ │  ├─ Validation: active, report mode                       │
 │ │  └─ Fall-through: report mode                             │
 │ └─ Origin: NIC LoadBalancer Public IP (from NIC state       │
-│    via the backend_nic flag)                                │
+│    via the backend_k8s_ingress flag)                        │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -413,7 +413,7 @@ Edit `config/uc2/gcp/env.json`:
 {
   "features": {
     "gke": true,
-    "nic": true
+    "k8s_ingress": true
   },
   "k8s": {
     "gcp_runtime_service_account_email": "<runtime-sa>@<project-id>.iam.gserviceaccount.com",
@@ -459,7 +459,7 @@ Edit `config/uc2/gcp/env.json`:
 - `waf_policy_name` - name of the `Policy` CRD that apps reference from their `VirtualServer`
 
 **Do Not Modify:**
-- `features.gke: true` / `features.nic: true` - required for UC2
+- `features.gke: true` / `features.k8s_ingress: true` - required for UC2
 
 ### Step 3: Configure App Settings
 
@@ -533,11 +533,12 @@ Edit `config/uc2/xc/env.json`:
     "xc_tenant": "your-xc-tenant",
     "api_url": "https://your-tenant.console.ves.volterra.io/api",
     "xc_namespace": "your-namespace",
+    "create_namespace": true,
     "app_domain": "your-app.example.com",
     "origin_server": "",
     "origin_port": "80",
     "backend_bigip": false,
-    "backend_nic": true,
+    "backend_k8s_ingress": true,
     "xc_waf_blocking": true
   },
   "xc_features": {
@@ -558,8 +559,9 @@ Edit `config/uc2/xc/env.json`:
 - `app_domain` - Public domain XC will serve. Must equal `app.app_host` in Step 3.
 
 **Important:**
-- `backend_nic: true` - XC origin pool resolves the NIC LoadBalancer IP from `state/uc2/nic` via remote state.
+- `backend_k8s_ingress: true` - XC origin pool resolves the NIC LoadBalancer IP from `state/uc2/nic` via remote state.
 - `origin_server: ""` - leave empty; resolved automatically from NIC remote state.
+- `create_namespace: true` - the deploy workflow creates the XC namespace directly via the API (not Terraform) before uploading the OAS spec, and destroy checks it's empty before deleting it. Set to `false` if you're bringing your own pre-existing namespace; the pipeline will then never create or delete it.
 - `xc_api_pro: true` + `xc_api_val_*` + `enforcement_report: true` + `fall_through_mode_report: true` - default UC2 stance is "report everything API-related; block traditional WAF hits via `xc_waf_blocking: true`". Flip `enforcement_block: true` and `fall_through_mode_report: false` if you want OAS enforcement.
 - The full set of feature flags is in [f5/xc/variables.tf](../f5/xc/variables.tf).
 
@@ -914,7 +916,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 ### XC Origin Shows Down / 502 from Public URL
 
 **Resolution:**
-- Confirm `backend_nic: true` is set in `config/uc2/xc/env.json` so XC picks up the NIC IP from `state/uc2/nic`.
+- Confirm `backend_k8s_ingress: true` is set in `config/uc2/xc/env.json` so XC picks up the NIC IP from `state/uc2/nic`.
 - Confirm the NIC LoadBalancer Service has an external IP (see [NIC LoadBalancer Pending External IP](#nic-loadbalancer-pending-external-ip)).
 - The `app_domain` in `config/uc2/xc/env.json` must equal the `app_host` in `config/uc2/app/env.json`. If they drift, XC forwards a Host header NIC's `VirtualServer` won't match and the origin looks healthy while the app is unreachable through XC.
 - Direct-to-NIC reachability must work before XC will look healthy.

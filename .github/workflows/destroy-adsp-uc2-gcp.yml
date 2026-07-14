@@ -127,6 +127,7 @@ jobs:
             enforcement_block: (.xc_features.enforcement_block // false),
             enforcement_report: (.xc_features.enforcement_report // false),
             fall_through_mode_allow: (.xc_features.fall_through_mode_allow // false),
+            fall_through_mode_report: (.xc_features.fall_through_mode_report // false),
 
             xc_jwt_val: (.xc_features.xc_jwt_val // false),
             jwt_val_block: (.xc_features.jwt_val_block // false),

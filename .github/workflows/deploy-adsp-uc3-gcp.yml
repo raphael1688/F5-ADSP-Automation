@@ -109,7 +109,7 @@ jobs:
             admin_src_addr,
 
             # feature flags expected by infra variables.tf
-            k8s_ingress: ( .features.nginx_ingress_controller // false ),
+            k8s_ingress: ( .features.k8s_ingress // false ),
             bigip: ( .features.bigip // false )
           }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
 
@@ -165,7 +165,6 @@ jobs:
           jq -s '.[0] * .[1] | {
             gcp_project_id,
             gcp_region,
-            gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
             infra_state_prefix: "state/uc3/infra",
@@ -176,7 +175,6 @@ jobs:
             boot_disk_gb: (.compute.boot_disk_gb // 20),
             assign_public_ip: (.compute.assign_public_ip // false),
             enable_oslogin: (.compute.enable_oslogin // false),
-            install_docker_compose: (.compute.install_docker_compose // true),
 
             vm_create_comfy_capybara: (.compute.vm_create_comfy_capybara // false),
             comfy_compose_artifact: (.compute.comfy_compose_artifact // "ghcr.io/knowbase/comfy-capybara-compose"),
@@ -355,7 +353,6 @@ jobs:
 
             f5_username: (.bigip_base.f5_username // "admin"),
 
-            nic_count: (.bigip_base.nic_count // "true"),
             asm: (.bigip_base.asm // "none"),
             apm: (.bigip_base.apm // "none")
           }' "$COMMON" "$UC_GCP" > /tmp/bigip-base.tfvars.json
@@ -539,6 +536,7 @@ jobs:
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
             infra_state_prefix: "state/uc3/infra",
             bigip_base_state_prefix: "state/uc3/bigip-base",
+            backend_bigip_base: (.asle_config.backend_bigip_base // true),
 
             bundle_gcs_path: "artifacts/uc3/asle/bundle.json",
 

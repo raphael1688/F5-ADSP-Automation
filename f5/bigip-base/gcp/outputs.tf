@@ -34,6 +34,6 @@ output "bigip_module" {
 }
 
 output "as3_uri" {
-  value = local.as3_gcs_uri
-  description = "Testing"
+  value       = local.as3_gcs_uri
+  description = "Fully qualified gs:// URI of the AS3 declaration this BIG-IP polls on boot."
 }

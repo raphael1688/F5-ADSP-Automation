@@ -6,9 +6,3 @@ data "terraform_remote_state" "infra" {
     prefix = var.infra_state_prefix
   }
 }
-
-# Latest Ubuntu LTS image (stable default for Docker host)
-data "google_compute_image" "ubuntu_lts" {
-  family  = "ubuntu-2204-lts"
-  project = "ubuntu-os-cloud"
-}

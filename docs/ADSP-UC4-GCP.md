@@ -490,6 +490,7 @@ Edit `config/uc4/xc/env.json`:
     "xc_tenant": "your-xc-tenant",
     "api_url": "https://your-tenant.console.ves.volterra.io/api",
     "xc_namespace": "your-namespace",
+    "create_namespace": true,
     "app_domain": "your-app.example.com",
     "origin_server": "",
     "origin_port": "80",
@@ -517,6 +518,7 @@ Edit `config/uc4/xc/env.json`:
 **Important:**
 - `backend_k8s_ingress: true` - XC origin pool resolves the NGF data plane LoadBalancer IP from `state/uc4/ngf` via remote state.
 - `origin_server: ""` - leave empty; resolved automatically from NGF remote state.
+- `create_namespace: true` - the deploy workflow creates the XC namespace directly via the API (not Terraform) before uploading the OAS spec, and destroy checks it's empty before deleting it. Set to `false` if you're bringing your own pre-existing namespace; the pipeline will then never create or delete it.
 - `xc_api_pro: true` + `xc_api_val_*` + `enforcement_report: true` + `fall_through_mode_report: true` - default UC4 stance is "report everything API-related; block traditional WAF hits via `xc_waf_blocking: true`". Flip `enforcement_block: true` and `fall_through_mode_report: false` if you want OAS enforcement.
 - The full set of feature flags is in [f5/xc/variables.tf](../f5/xc/variables.tf).
 

@@ -7,6 +7,7 @@ data "terraform_remote_state" "infra" {
 }
 
 data "terraform_remote_state" "bigip_base" {
+  count   = var.backend_bigip_base ? 1 : 0
   backend = "gcs"
   config = {
     bucket = var.tf_state_bucket

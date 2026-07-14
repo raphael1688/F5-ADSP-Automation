@@ -68,12 +68,15 @@ The GitHub Actions workflow deploys modules with the following dependencies:
 2. Terraform: Infra (VPC, subnets, firewall, NAT)
    ↓
    ├──> 3a. Terraform: Compute
-   │       (parallel with bigip-base)
+   │       (parallel with bigip-base, asle-base)
    │
-   └──> 3b. Terraform: BIG-IP Base
-           (parallel with compute)
+   ├──> 3b. Terraform: BIG-IP Base
+   │       (parallel with compute, asle-base)
+   │
+   └──> 3c. Terraform: ASLE Base
+           (parallel with compute, bigip-base)
    ↓
-   ├──> 4a. Terraform: BIG-IP Config   (needs compute + bigip-base)
+   ├──> 4a. Terraform: BIG-IP Config   (needs compute + bigip-base + asle-base)
    │
    └──> 4b. Terraform: ASLE Config     (needs bigip-base; parallel with bigip-config)
 ```
@@ -91,7 +94,7 @@ The GitHub Actions workflow deploys modules with the following dependencies:
 - The poller is enabled only when `asle_config_bundle_gcs_uri` is non-empty
 - ASLE itself never needs to be reachable from outside the Docker host; all configuration flows through GCS
 
-Destroy operations run in reverse with parallelism: `(BIG-IP Config || ASLE Config) → (BIG-IP Base || Compute) → Infra → State Bucket`
+Destroy operations run in reverse with parallelism: `(BIG-IP Base || Compute || ASLE Base) → Infra → State Bucket`. There is no separate BIG-IP Config or ASLE Config destroy step — destroying BIG-IP Base and ASLE Base removes the devices those configs targeted.
 
 ---
 
@@ -282,7 +285,7 @@ Every other compute / bigip_base / bigip_config / asle_config field keeps its ex
 git checkout -b deploy-adsp-uc3 && git push -u origin deploy-adsp-uc3
 ```
 
-Watch the workflow in the Actions tab. Modules run: state bucket → infra → (compute || bigip-base) → (bigip-config || asle-config).
+Watch the workflow in the Actions tab. Modules run: state bucket → infra → (compute || bigip-base || asle-base) → (bigip-config || asle-config).
 
 `test-adsp-uc3` runs validate only. `destroy-adsp-uc3` tears down in reverse order.
 
@@ -303,10 +306,11 @@ F5-ADSP-Automation/
 │   └── uc3/
 │       └── gcp/env.json             # UC3 compute / BIG-IP / ASLE config
 ├── infra/gcp/                       # Network infrastructure
-├── compute/gcp/                     # Docker host VMs (comfy, ASLE)
+├── compute/gcp/                     # Docker host VMs (comfy-capybara)
 ├── f5/
 │   ├── bigip-base/gcp/              # BIG-IP instance
 │   ├── bigip-config/                # AS3 + self-signed cert + iRule (template at config/uc3-config.json.tftpl)
+│   ├── asle-base/gcp/               # ASLE Docker host VM
 │   └── asle-config/gcp/             # Bundle renderer + GCS uploader for the on-VM ASLE poller
 └── docs/
     └── ADSP-UC3-GCP.md              # This document
@@ -317,9 +321,10 @@ F5-ADSP-Automation/
 Remote state is stored in GCS bucket `${project_prefix}-state-bucket`:
 
 - `state/uc3/infra/` - VPC, subnets, firewall rules
-- `state/uc3/compute/` - Comfy + ASLE Docker hosts
+- `state/uc3/compute/` - Comfy-capybara Docker host
 - `state/uc3/bigip-base/` - BIG-IP instance
 - `state/uc3/bigip-config/` - cert resources + AS3 declaration metadata
+- `state/uc3/asle-base/` - ASLE Docker host VM
 - `state/uc3/asle-config/` - bundle GCS object metadata
 - `artifacts/uc3/as3/` - AS3 declaration the BIG-IP polls
 - `artifacts/uc3/asle/` - config bundle the ASLE poller polls
@@ -516,7 +521,7 @@ gcloud storage cat gs://${STATE_BUCKET}/state/uc3/compute/default.tfstate | \
   jq -r '.outputs.comfy_capybara_internal_ip.value'
 
 # ASLE docker host internal IP
-gcloud storage cat gs://${STATE_BUCKET}/state/uc3/compute/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc3/asle-base/default.tfstate | \
   jq -r '.outputs.asle_internal_ip.value'
 
 # ASLE config bundle URI (the poller is watching this)
@@ -532,7 +537,7 @@ gcloud storage cat gs://${STATE_BUCKET}/state/uc3/asle-config/default.tfstate | 
 | `bigip_mgmt_internal_ip` | bigip-base | BIG-IP internal IP. Used by AS3 for the internal logging VS |
 | `bigip_admin_password` | bigip-base | Generated admin password (sensitive) |
 | `comfy_capybara_internal_ip` | compute | Comfy docker host internal IP |
-| `asle_internal_ip` | compute | ASLE docker host internal IP |
+| `asle_internal_ip` | asle-base | ASLE docker host internal IP |
 | `bundle_gcs_uri` | asle-config | gs:// URI of the ASLE config bundle the poller watches |
 
 ---

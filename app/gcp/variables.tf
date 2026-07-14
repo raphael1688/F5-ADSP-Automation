@@ -28,7 +28,6 @@ variable "k8s_state_prefix" {
 
 variable "k8s_ingress_state_prefix" {
   type        = string
-  default     = "state/uc2/nic"
   description = "GCS prefix where the ingress data-plane (NIC or NGF) state is stored."
 }
 

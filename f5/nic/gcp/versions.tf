@@ -22,6 +22,10 @@ terraform {
       source  = "hashicorp/http"
       version = "~> 3.4"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.12"
+    }
   }
 
   # Backend configured via -backend-config at init time.

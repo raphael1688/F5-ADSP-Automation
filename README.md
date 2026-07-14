@@ -9,6 +9,7 @@ CI/CD-driven deployment of F5 Application Delivery and Security Platform (ADSP) 
 | UC1 | BIG-IP with AWAF fronting vulnerable applications, F5 Distributed Cloud HTTP LB with WAF on top | GCP | [Deploy UC1 in Google Cloud](docs/ADSP-UC1-GCP.md) |
 | UC2 | NGINX Ingress Controller with NGINX App Protect on GKE, F5 Distributed Cloud with API security on top | GCP | [Deploy UC2 in Google Cloud](docs/ADSP-UC2-GCP.md) |
 | UC3 | BIG-IP fronting Docker-hosted comfy-capybara with self-signed TLS, F5 API Security Local Edition (ASLE) receiving telemetry via iRule | GCP | [Deploy UC3 in Google Cloud](docs/ADSP-UC3-GCP.md) |
+| UC4 | NGINX Gateway Fabric on GKE, F5 Distributed Cloud with API security on top | GCP | [Deploy UC4 in Google Cloud](docs/ADSP-UC4-GCP.md) |
 
 Pick a use case and follow its deployment guide.
 
@@ -16,12 +17,14 @@ Pick a use case and follow its deployment guide.
 
 - `infra/<cloud>/` - shared per-cloud networking
 - `compute/<cloud>/` - application VMs (UC1, UC3)
-- `k8s/<cloud>/` - Kubernetes cluster (UC2)
+- `k8s/<cloud>/` - Kubernetes cluster (UC2, UC4)
 - `f5/bigip-base/<cloud>/`, `f5/bigip-config/<cloud>/` - BIG-IP instance and AS3 declaration (UC1, UC3)
 - `f5/nic/<cloud>/` - NGINX Ingress Controller and App Protect (UC2)
+- `f5/ngf/<cloud>/` - NGINX Gateway Fabric (UC4)
+- `f5/asle-base/<cloud>/` - ASLE Docker host VM (UC3)
 - `f5/asle-config/<cloud>/` - ASLE onboarding bundle uploader (UC3)
 - `f5/xc/` - F5 Distributed Cloud, cloud-agnostic, shared across use cases
-- `app/<cloud>/` - comfy-capybara Helm release and VirtualServer (UC2)
+- `app/<cloud>/` - comfy-capybara Helm release, VirtualServer (UC2) or HTTPRoute (UC4)
 - `config/common/<cloud>/` - shared cloud config
 - `config/uc<N>/<cloud-or-xc>/` - per-UC config
 - `.github/workflows/` - deploy and destroy workflows per UC
@@ -41,8 +44,9 @@ Pick a use case and follow its deployment guide.
 - A GCP project with billing enabled and Workload Identity Federation configured for GitHub Actions
 - GitHub Actions enabled on the forked repository
 - Per-UC F5 product entitlements:
-  - UC1, UC2: an F5 Distributed Cloud tenant with an API certificate
+  - UC1, UC2, UC4: an F5 Distributed Cloud tenant with an API certificate
   - UC2: an NGINX Plus subscription for the NIC + NAP V5 images
   - UC3: an operator-supplied F5 API Security Local Edition (ASLE) image tarball uploaded to a GCS bucket the deploy service account can read
+  - UC4: an NGINX Plus subscription for the NGINX Gateway Fabric data plane image
 
 Per-UC quotas, IAM roles, and configuration are documented in each use case guide.

@@ -127,6 +127,7 @@ jobs:
             enforcement_block: (.xc_features.enforcement_block // false),
             enforcement_report: (.xc_features.enforcement_report // false),
             fall_through_mode_allow: (.xc_features.fall_through_mode_allow // false),
+            fall_through_mode_report: (.xc_features.fall_through_mode_report // false),
 
             xc_jwt_val: (.xc_features.xc_jwt_val // false),
             jwt_val_block: (.xc_features.jwt_val_block // false),
@@ -301,10 +302,7 @@ jobs:
             image_registry:           (.app.image_registry           // ""),
             image_tag:                (.app.image_tag                // ""),
             image_pull_secret_name:   (.app.image_pull_secret_name   // ""),
-            vs_tls_enabled:           (.app.vs_tls_enabled           // false),
-            vs_tls_secret_name:       (.app.vs_tls_secret_name       // ""),
-            attach_waf_server_wide:   (.app.attach_waf_server_wide   // true),
-            attach_waf_to_api_route:  (.app.attach_waf_to_api_route  // true)
+            route_type:               (.app.route_type               // "httproute")
           }' "$COMMON" "$UC_APP" > /tmp/app.tfvars.json
 
       - name: Auth to Google Cloud (WIF)
