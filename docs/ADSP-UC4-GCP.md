@@ -20,46 +20,8 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ F5 Distributed Cloud (XC)                                   │
-│ ├─ HTTPS LoadBalancer (auto-cert)                           │
-│ ├─ WAF (blocking)                                           │
-│ ├─ API Protection (api_definition built from your OAS)      │
-│ │  ├─ Validation: active, report mode                       │
-│ │  └─ Fall-through: report mode                             │
-│ └─ Origin: NGF data plane LoadBalancer Public IP            │
-│    (from NGF state via the backend_k8s_ingress flag)        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ GCP VPC (${project_prefix}-vpc-*)                           │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ GKE Standard Cluster (zonal, private nodes)          │  │
-│  │                                                       │  │
-│  │  ┌────────────────────────────────────────────────┐  │  │
-│  │  │ Namespace: nginx-gateway                       │  │  │
-│  │  │ ├─ NGF control plane (Helm release)            │  │  │
-│  │  │ ├─ Gateway (gatewayClassName: nginx)           │  │  │
-│  │  │ └─ Provisioned data plane: <gateway>-nginx     │  │  │
-│  │  │    Deployment + Service type=LoadBalancer      │  │  │
-│  │  └────────────────────────────────────────────────┘  │  │
-│  │                              │                        │  │
-│  │                              ▼  (HTTPRoute attach)    │  │
-│  │  ┌────────────────────────────────────────────────┐  │  │
-│  │  │ Namespace: comfy-capybara                      │  │  │
-│  │  │ ├─ Deployments: frontend, api, internal-mock,  │  │  │
-│  │  │ │              shadow-api, db                  │  │  │
-│  │  │ └─ HTTPRoute (parentRef: Gateway in            │  │  │
-│  │  │    nginx-gateway; /api → api, / → frontend)    │  │  │
-│  │  └────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                             │
-│  Subnets: mgmt (/24), k8s (/18 + pods/svcs secondary)      │
-└─────────────────────────────────────────────────────────────┘
-```
+<img width="2700" height="1976" alt="Architectures-V1 - UC4" src="https://github.com/user-attachments/assets/413fb52d-dc4f-46af-bbbc-2191f2769e41" />
+
 
 ### Deployment Flow
 
