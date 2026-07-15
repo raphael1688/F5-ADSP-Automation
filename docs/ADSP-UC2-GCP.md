@@ -1,3 +1,4 @@
+
 # Deploy Use-Case 2 in Google Cloud
 
 This document provides complete instructions for deploying Application Security and Delivery Portfolio (ADSP) Use-Case 2 in Google Cloud Platform.
@@ -18,46 +19,8 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ F5 Distributed Cloud (XC)                                   │
-│ ├─ HTTPS LoadBalancer (auto-cert)                           │
-│ ├─ WAF (blocking)                                           │
-│ ├─ API Protection (api_definition built from your OAS)      │
-│ │  ├─ Validation: active, report mode                       │
-│ │  └─ Fall-through: report mode                             │
-│ └─ Origin: NIC LoadBalancer Public IP (from NIC state       │
-│    via the backend_k8s_ingress flag)                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ GCP VPC (${project_prefix}-vpc-*)                           │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ GKE Standard Cluster (zonal, private nodes)          │  │
-│  │                                                       │  │
-│  │  ┌────────────────────────────────────────────────┐  │  │
-│  │  │ Namespace: nginx-ingress                       │  │  │
-│  │  │ ├─ NIC Helm release                            │  │  │
-│  │  │ │  └─ NAP sidecars: waf-enforcer + config-mgr  │  │  │
-│  │  │ ├─ Policy CRD: waf-policy (compiled bundle)    │  │  │
-│  │  │ └─ Service type=LoadBalancer (public IP)       │  │  │
-│  │  └────────────────────────────────────────────────┘  │  │
-│  │                              │                        │  │
-│  │                              ▼  (VirtualServer route) │  │
-│  │  ┌────────────────────────────────────────────────┐  │  │
-│  │  │ Namespace: comfy-capybara                      │  │  │
-│  │  │ ├─ Deployments: frontend, api, internal-mock,  │  │  │
-│  │  │ │              shadow-api, db                  │  │  │
-│  │  │ └─ VirtualServer (refs waf-policy in           │  │  │
-│  │  │    nginx-ingress, server-wide + /api)          │  │  │
-│  │  └────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                             │
-│  Subnets: mgmt (/24), k8s (/18 + pods/svcs secondary)      │
-└─────────────────────────────────────────────────────────────┘
-```
+<img width="2700" height="1976" alt="Architectures-V1 - UC2" src="https://github.com/user-attachments/assets/1e934ff6-0b58-4f7d-8d11-b67782c89e1d" />
+
 
 ### Deployment Flow
 
