@@ -27,7 +27,7 @@ The deployment is orchestrated entirely through GitHub Actions using Terraform w
 │ │  ├─ Validation: active, report mode                       │
 │ │  └─ Fall-through: report mode                             │
 │ └─ Origin: NIC LoadBalancer Public IP (from NIC state       │
-│    via the backend_nic flag)                                │
+│    via the backend_k8s_ingress flag)                        │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -201,31 +201,58 @@ If you need to create the Workload Identity Pool:
 ```bash
 # Set variables
 PROJECT_ID="your-project-id"
-POOL_NAME="github-actions-pool"
+PROJECT_NUMBER="your-project-number"
+POOL_NAME="${PREFIX}-github-actions-pool"
 PROVIDER_NAME="github-provider"
-SERVICE_ACCOUNT="github-actions-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-REPO="your-github-org/your-repo"
+SA_PREFIX=""
+SA_SUFFIX="github-actions-sa"
+SERVICE_ACCOUNT="${SA_PREFIX}-${SA_SUFFIX}@${PROJECT_ID}.iam.gserviceaccount.com"
+GH_ORGANIZATION="your-github-org"
+GH_REPO="${GH_ORGANIZATION}/your-repo"
 
-# Create Workload Identity Pool
+# 1. Create the service account
+gcloud iam service-accounts create "${SA_PREFIX}-${SA_SUFFIX}" \
+    --display-name="${SA_PREFIX} GitHub Actions for ADSP Automation" \
+    --project="${PROJECT_ID}"
+
+# 2. Grant the four roles
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/compute.admin"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/container.admin"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/storage.admin"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/iam.serviceAccountUser"
+
+# 3. Create Workload Identity Pool
 gcloud iam workload-identity-pools create "${POOL_NAME}" \
   --project="${PROJECT_ID}" \
   --location="global" \
   --display-name="GitHub Actions Pool"
 
-# Create Provider
+# 4. Create Provider
 gcloud iam workload-identity-pools providers create-oidc "${PROVIDER_NAME}" \
   --project="${PROJECT_ID}" \
   --location="global" \
   --workload-identity-pool="${POOL_NAME}" \
   --display-name="GitHub Provider" \
   --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository_owner == '${GH_ORGANIZATION}'" \
   --issuer-uri="https://token.actions.githubusercontent.com"
 
-# Grant service account access
+# 5. Grant service account access
 gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT}" \
   --project="${PROJECT_ID}" \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/${POOL_NAME}/attribute.repository/${REPO}"
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_NAME}/attribute.repository/${GH_REPO}"
 ```
 
 ---
@@ -386,7 +413,7 @@ Edit `config/uc2/gcp/env.json`:
 {
   "features": {
     "gke": true,
-    "nic": true
+    "k8s_ingress": true
   },
   "k8s": {
     "gcp_runtime_service_account_email": "<runtime-sa>@<project-id>.iam.gserviceaccount.com",
@@ -432,7 +459,7 @@ Edit `config/uc2/gcp/env.json`:
 - `waf_policy_name` - name of the `Policy` CRD that apps reference from their `VirtualServer`
 
 **Do Not Modify:**
-- `features.gke: true` / `features.nic: true` - required for UC2
+- `features.gke: true` / `features.k8s_ingress: true` - required for UC2
 
 ### Step 3: Configure App Settings
 
@@ -506,11 +533,12 @@ Edit `config/uc2/xc/env.json`:
     "xc_tenant": "your-xc-tenant",
     "api_url": "https://your-tenant.console.ves.volterra.io/api",
     "xc_namespace": "your-namespace",
+    "create_namespace": true,
     "app_domain": "your-app.example.com",
     "origin_server": "",
     "origin_port": "80",
     "backend_bigip": false,
-    "backend_nic": true,
+    "backend_k8s_ingress": true,
     "xc_waf_blocking": true
   },
   "xc_features": {
@@ -531,8 +559,9 @@ Edit `config/uc2/xc/env.json`:
 - `app_domain` - Public domain XC will serve. Must equal `app.app_host` in Step 3.
 
 **Important:**
-- `backend_nic: true` - XC origin pool resolves the NIC LoadBalancer IP from `state/uc2/nic` via remote state.
+- `backend_k8s_ingress: true` - XC origin pool resolves the NIC LoadBalancer IP from `state/uc2/nic` via remote state.
 - `origin_server: ""` - leave empty; resolved automatically from NIC remote state.
+- `create_namespace: true` - the deploy workflow creates the XC namespace directly via the API (not Terraform) before uploading the OAS spec, and destroy checks it's empty before deleting it. Set to `false` if you're bringing your own pre-existing namespace; the pipeline will then never create or delete it.
 - `xc_api_pro: true` + `xc_api_val_*` + `enforcement_report: true` + `fall_through_mode_report: true` - default UC2 stance is "report everything API-related; block traditional WAF hits via `xc_waf_blocking: true`". Flip `enforcement_block: true` and `fall_through_mode_report: false` if you want OAS enforcement.
 - The full set of feature flags is in [f5/xc/variables.tf](../f5/xc/variables.tf).
 
@@ -608,23 +637,23 @@ PROJECT_PREFIX="your-prefix"
 STATE_BUCKET="${PROJECT_PREFIX}-state-bucket"
 
 # Get GKE cluster name
-gsutil cat gs://${STATE_BUCKET}/state/uc2/k8s/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc2/k8s/default.tfstate | \
   jq -r '.outputs.cluster_name.value'
 
 # Get NIC LoadBalancer public IP (XC origin)
-gsutil cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
   jq -r '.outputs.nic_external_ip.value'
 
 # Get NIC namespace + WAF policy
-gsutil cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
   jq -r '.outputs.nic_namespace.value, .outputs.waf_policy_name.value'
 
 # Get app FQDN + namespace + VirtualServer name
-gsutil cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
   jq -r '.outputs.app_host.value, .outputs.app_namespace.value, .outputs.virtualserver_name.value'
 
 # Get XC public domain + LB name + WAF policy name
-gsutil cat gs://${STATE_BUCKET}/state/uc2/xc/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc2/xc/default.tfstate | \
   jq -r '.outputs.endpoint.value, .outputs.xc_lb_name.value, .outputs.xc_waf_name.value'
 ```
 
@@ -633,7 +662,7 @@ gsutil cat gs://${STATE_BUCKET}/state/uc2/xc/default.tfstate | \
 ```bash
 PROJECT_ID="your-gcp-project-id"
 ZONE="your-gcp-zone"
-CLUSTER_NAME=$(gsutil cat gs://${STATE_BUCKET}/state/uc2/k8s/default.tfstate | \
+CLUSTER_NAME=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/k8s/default.tfstate | \
   jq -r '.outputs.cluster_name.value')
 
 gcloud container clusters get-credentials "${CLUSTER_NAME}" \
@@ -673,7 +702,7 @@ kubectl get ns
 ### NIC + NAP Pod Status
 
 ```bash
-NIC_NS=$(gsutil cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
+NIC_NS=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
   jq -r '.outputs.nic_namespace.value')
 
 # Three containers per NIC pod: nginx-ingress, waf-enforcer, waf-config-mgr
@@ -690,7 +719,7 @@ kubectl -n "${NIC_NS}" logs -l app.kubernetes.io/name=nginx-ingress -c waf-enfor
 ### Application Workload Status
 
 ```bash
-APP_NS=$(gsutil cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
+APP_NS=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
   jq -r '.outputs.app_namespace.value')
 
 kubectl -n "${APP_NS}" get pods
@@ -702,9 +731,9 @@ kubectl -n "${APP_NS}" describe virtualserver
 ### Application Reachability
 
 ```bash
-NIC_IP=$(gsutil cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
+NIC_IP=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/nic/default.tfstate | \
   jq -r '.outputs.nic_external_ip.value')
-APP_HOST=$(gsutil cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
+APP_HOST=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc2/app/default.tfstate | \
   jq -r '.outputs.app_host.value')
 
 # Through NIC LoadBalancer directly (Host header drives VirtualServer match)
@@ -783,7 +812,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 **Resolution:**
 - State bucket is auto-created by `bootstrap_state_bucket` job
 - Verify job completed successfully in Actions log
-- Check bucket exists: `gsutil ls -p PROJECT_ID | grep state-bucket`
+- Check bucket exists: `gcloud storage ls -p PROJECT_ID | grep state-bucket`
 - Ensure service account has `roles/storage.admin`
 
 **Error:** `Error acquiring the state lock`
@@ -793,8 +822,8 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 - Wait for concurrent run to complete
 - If stuck, manually remove lock:
   ```bash
-  gsutil ls gs://${STATE_BUCKET}/state/uc2/MODULE_NAME/default.tflock
-  gsutil rm gs://${STATE_BUCKET}/state/uc2/MODULE_NAME/default.tflock
+  gcloud storage ls gs://${STATE_BUCKET}/state/uc2/MODULE_NAME/default.tflock
+  gcloud storage rm gs://${STATE_BUCKET}/state/uc2/MODULE_NAME/default.tflock
   ```
 
 ### Configuration Errors
@@ -887,7 +916,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 ### XC Origin Shows Down / 502 from Public URL
 
 **Resolution:**
-- Confirm `backend_nic: true` is set in `config/uc2/xc/env.json` so XC picks up the NIC IP from `state/uc2/nic`.
+- Confirm `backend_k8s_ingress: true` is set in `config/uc2/xc/env.json` so XC picks up the NIC IP from `state/uc2/nic`.
 - Confirm the NIC LoadBalancer Service has an external IP (see [NIC LoadBalancer Pending External IP](#nic-loadbalancer-pending-external-ip)).
 - The `app_domain` in `config/uc2/xc/env.json` must equal the `app_host` in `config/uc2/app/env.json`. If they drift, XC forwards a Host header NIC's `VirtualServer` won't match and the origin looks healthy while the app is unreachable through XC.
 - Direct-to-NIC reachability must work before XC will look healthy.
@@ -932,7 +961,7 @@ curl -i "https://${APP_HOST}/api/users?id=1%20OR%201=1"
 - **Enable versioning** on state bucket (auto-enabled by workflow)
 - **Back up state** before major changes:
   ```bash
-  gsutil -m cp -r gs://${STATE_BUCKET}/state/uc2 gs://backup-bucket/state-uc2-$(date +%Y%m%d)
+  gcloud storage -m cp -r gs://${STATE_BUCKET}/state/uc2 gs://backup-bucket/state-uc2-$(date +%Y%m%d)
   ```
 - **Clean up old state** after successful destroys
 

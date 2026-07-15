@@ -14,11 +14,11 @@ data "terraform_remote_state" "k8s" {
   }
 }
 
-data "terraform_remote_state" "nic" {
+data "terraform_remote_state" "k8s_ingress" {
   backend = "gcs"
   config = {
     bucket = var.tf_state_bucket
-    prefix = var.nic_state_prefix
+    prefix = var.k8s_ingress_state_prefix
   }
 }
 

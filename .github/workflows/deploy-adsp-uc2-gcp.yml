@@ -109,10 +109,8 @@ jobs:
             admin_src_addr,
 
             # feature flags expected by infra variables.tf
-            nap:    ( .features.nap // false ),
-            nic:    ( .features.nic // false ),
+            k8s_ingress: ( .features.k8s_ingress // false ),
             bigip:  ( .features.bigip // false ),
-            "bigip_cis": ( .features.bigip_cis // false ),
             gke:    ( .features.gke // false )
           }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
 
@@ -400,7 +398,7 @@ jobs:
             tf_state_bucket:    "'"${TF_STATE_BUCKET}"'",
             infra_state_prefix: "state/uc2/infra",
             k8s_state_prefix:   "state/uc2/k8s",
-            nic_state_prefix:   "state/uc2/nic",
+            k8s_ingress_state_prefix: "state/uc2/nic",
 
             namespace:                (.app.namespace                // "comfy-capybara"),
             chart_repository:         (.app.chart_repository         // "oci://ghcr.io/knowbase/charts"),
@@ -527,6 +525,21 @@ jobs:
           openssl pkcs12 -legacy -in /tmp/api.p12 -out /tmp/api.pem \
             -nodes -passin "pass:$VES_P12_PASSWORD"
 
+          CREATE_NS=$(jq -r '.xc_base.create_namespace // true' "$UC_XC")
+          if [ "$CREATE_NS" = "true" ]; then
+            NS_BODY=$(jq -n --arg name "$NS" '{metadata: {name: $name}, spec: {}}')
+            NS_HTTP_STATUS=$(curl -sS -o /tmp/ns_response.json -w '%{http_code}' -X POST \
+              --cert /tmp/api.pem --key /tmp/api.pem \
+              -H "Content-Type: application/json" \
+              -d "$NS_BODY" \
+              "${API_URL}/web/namespaces")
+            if [ "$NS_HTTP_STATUS" -ge 400 ] && [ "$NS_HTTP_STATUS" -ne 409 ]; then
+              echo "XC namespace create failed with HTTP $NS_HTTP_STATUS:" >&2
+              cat /tmp/ns_response.json >&2
+              exit 1
+            fi
+          fi
+
           OAS_B64=$(base64 -w 0 "$OAS_FILE")
           BODY=$(jq -n \
             --arg name "$NAME" \
@@ -542,11 +555,18 @@ jobs:
               no_attributes: {}
             }')
 
-          RESPONSE=$(curl -fsSL -X PUT \
+          HTTP_STATUS=$(curl -sS -o /tmp/oas_response.json -w '%{http_code}' -X PUT \
             --cert /tmp/api.pem --key /tmp/api.pem \
             -H "Content-Type: application/json" \
             -d "$BODY" \
             "${API_URL}/object_store/namespaces/${NS}/stored_objects/swagger/${NAME}")
+          RESPONSE=$(cat /tmp/oas_response.json)
+
+          if [ "$HTTP_STATUS" -ge 400 ]; then
+            echo "XC object store PUT failed with HTTP $HTTP_STATUS:" >&2
+            echo "$RESPONSE" >&2
+            exit 1
+          fi
 
           SPEC_URL=$(echo "$RESPONSE" | jq -r '.metadata.url // empty')
           if [ -z "$SPEC_URL" ]; then
@@ -571,18 +591,18 @@ jobs:
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
             infra_state_prefix: "state/uc2/infra",
-            nic_state_prefix:   "state/uc2/nic",
+            k8s_ingress_state_prefix: "state/uc2/nic",
 
-            xc_tenant: .xc_base.xc_tenant,
             api_url: .xc_base.api_url,
             xc_namespace: .xc_base.xc_namespace,
+            create_namespace: false,
             app_domain: .xc_base.app_domain,
 
             origin_server: (.xc_base.origin_server // ""),
             origin_port: ( .xc_base.origin_port | tostring ),
 
             backend_bigip: (.xc_base.backend_bigip // false),
-            backend_nic:   (.xc_base.backend_nic   // true),
+            backend_k8s_ingress: (.xc_base.backend_k8s_ingress // true),
 
             xc_waf_blocking: (.xc_base.xc_waf_blocking // false),
 

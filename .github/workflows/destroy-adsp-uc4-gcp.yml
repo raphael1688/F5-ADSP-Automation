@@ -1,0 +1,659 @@
+name: "Destroy GCP ADSP Use-Case 4"
+
+on:
+  push:
+    branches:
+      - destroy-adsp-uc4
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_CLI_ARGS: "-no-color"
+
+jobs:
+
+  #--------------------------------------------------------------
+  # Precheck: verify state bucket exists before attempting destroy
+  #--------------------------------------------------------------
+  precheck_state_bucket:
+    name: "Precheck: State bucket exists?"
+    runs-on: ubuntu-latest
+    outputs:
+      bucket_exists: ${{ steps.check.outputs.bucket_exists }}
+      tf_state_bucket: ${{ steps.env.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Load common config + derive bucket
+        id: env
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON_JSON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          PROJECT_PREFIX="$(jq -r .project_prefix "$COMMON_JSON")"
+          TF_STATE_BUCKET="${PROJECT_PREFIX}-state-bucket"
+          echo "tf_state_bucket=${TF_STATE_BUCKET}" >> "$GITHUB_OUTPUT"
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Check bucket exists
+        id: check
+        run: |
+          set -euo pipefail
+          TF_STATE_BUCKET="${{ steps.env.outputs.tf_state_bucket }}"
+          if gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" >/dev/null 2>&1; then
+            echo "bucket_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bucket_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  #--------------------------------------------------------------
+  # Destroy order: XC → App → NIC + NAP → GKE → Infra → Bucket
+  #--------------------------------------------------------------
+  terraform_xc_destroy:
+    name: "Destroy: F5 XC"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: precheck_state_bucket
+    defaults:
+      run:
+        working-directory: ./f5/xc
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+      VES_P12_CONTENT: ${{ secrets.VES_P12_CONTENT }}
+      VES_P12_PASSWORD: ${{ secrets.VES_P12_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/xc.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_XC="$GITHUB_WORKSPACE/config/uc4/xc/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id: .gcp_project_id,
+            gcp_region: .gcp_region,
+
+            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+            k8s_ingress_state_prefix: "state/uc4/ngf",
+
+            api_url: .xc_base.api_url,
+            xc_namespace: .xc_base.xc_namespace,
+            create_namespace: false,
+            app_domain: .xc_base.app_domain,
+
+            origin_server: (.xc_base.origin_server // ""),
+            origin_port: ( .xc_base.origin_port | tostring ),
+
+            backend_bigip: (.xc_base.backend_bigip // false),
+            backend_k8s_ingress: (.xc_base.backend_k8s_ingress // true),
+
+            xc_waf_blocking: (.xc_base.xc_waf_blocking // false),
+
+            xc_app_type: (.xc_base.xc_app_type // []),
+            xc_multi_lb: (.xc_base.xc_multi_lb // false),
+
+            xc_byo_cert: (.xc_base.xc_byo_cert // false),
+            xc_byo_cert_name: (.xc_base.xc_byo_cert_name // ""),
+            xc_byo_cert_namespace: (.xc_base.xc_byo_cert_namespace // "shared"),
+
+            xc_api_disc: (.xc_features.xc_api_disc // false),
+            xc_api_pro: (.xc_features.xc_api_pro // false),
+            xc_api_spec: (.xc_features.xc_api_spec // null),
+            xc_api_val: (.xc_features.xc_api_val // false),
+            xc_api_val_all: (.xc_features.xc_api_val_all // false),
+            xc_api_val_active: (.xc_features.xc_api_val_active // false),
+            xc_resp_val_active: (.xc_features.xc_resp_val_active // false),
+            xc_api_val_custom: (.xc_features.xc_api_val_custom // false),
+
+            enforcement_block: (.xc_features.enforcement_block // false),
+            enforcement_report: (.xc_features.enforcement_report // false),
+            fall_through_mode_allow: (.xc_features.fall_through_mode_allow // false),
+            fall_through_mode_report: (.xc_features.fall_through_mode_report // false),
+
+            xc_jwt_val: (.xc_features.xc_jwt_val // false),
+            jwt_val_block: (.xc_features.jwt_val_block // false),
+            jwt_val_report: (.xc_features.jwt_val_report // false),
+            jwks: (.xc_features.jwks // "app_domain"),
+            iss_claim: (.xc_features.iss_claim // false),
+            aud_claim: (.xc_features.aud_claim // [""]),
+            exp_claim: (.xc_features.exp_claim // false),
+
+            xc_bot_def: (.xc_features.xc_bot_def // false),
+            xc_bot_def_advanced: (.xc_features.xc_bot_def_advanced // false),
+            xc_bot_def_advanced_web_policy_name: (.xc_features.xc_bot_def_advanced_web_policy_name // ""),
+            xc_bot_def_advanced_web_policy_namespace: (.xc_features.xc_bot_def_advanced_web_policy_namespace // "shared"),
+            xc_ddos_pro: (.xc_features.xc_ddos_pro // false),
+            xc_l7_ddos_rps_threshold: (.xc_features.xc_l7_ddos_rps_threshold // 100),
+            xc_slow_ddos: (.xc_features.xc_slow_ddos // false),
+            xc_slow_ddos_request_headers_timeout: (.xc_features.xc_slow_ddos_request_headers_timeout // 10),
+            xc_slow_ddos_request_timeout: (.xc_features.xc_slow_ddos_request_timeout // 60),
+            xc_ip_reputation: (.xc_features.xc_ip_reputation // false),
+            xc_ip_threat_categories: (.xc_features.xc_ip_threat_categories // ["SPAM_SOURCES","WINDOWS_EXPLOITS","WEB_ATTACKS","BOTNETS","SCANNERS","DOS_ATTACKS","PHISHING","PROXY","TOR_PROXY"]),
+            xc_threat_mesh: (.xc_features.xc_threat_mesh // false),
+            xc_api_rate_limit: (.xc_features.xc_api_rate_limit // false),
+            xc_api_rate_limit_threshold: (.xc_features.xc_api_rate_limit_threshold // 100),
+            xc_api_rate_limit_unit: (.xc_features.xc_api_rate_limit_unit // "MINUTE"),
+            xc_api_rate_limit_base_path: (.xc_features.xc_api_rate_limit_base_path // "/"),
+            xc_mud: (.xc_features.xc_mud // false),
+            xc_data_guard: (.xc_features.xc_data_guard // false),
+
+            xc_api_crawler: (.xc_features.xc_api_crawler // false),
+            xc_api_auth_discovery: (.xc_features.xc_api_auth_discovery // false),
+            xc_client_side_defense: (.xc_features.xc_client_side_defense // false),
+            xc_waf_exclusion: (.xc_features.xc_waf_exclusion // false),
+            xc_waf_exclusion_policy_name: (.xc_features.xc_waf_exclusion_policy_name // ""),
+            xc_waf_exclusion_policy_namespace: (.xc_features.xc_waf_exclusion_policy_namespace // "shared"),
+            xc_sensitive_data_policy: (.xc_features.xc_sensitive_data_policy // false),
+            xc_sensitive_data_compliances: (.xc_features.xc_sensitive_data_compliances // [])
+          }' "$COMMON" "$UC_XC" > /tmp/xc.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/xc"
+
+      - name: Terraform Plan (destroy)
+        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/xc.tfvars.json
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -input=false -var-file=/tmp/xc.tfvars.json
+
+      - name: Delete OAS stored object
+        shell: bash
+        run: |
+          set -euo pipefail
+          UC_XC="$GITHUB_WORKSPACE/config/uc4/xc/env.json"
+          API_URL=$(jq -r .xc_base.api_url "$UC_XC")
+          NS=$(jq -r .xc_base.xc_namespace "$UC_XC")
+          NAME="uc4-app-oas"
+
+          echo "$VES_P12_CONTENT" | base64 -d > /tmp/api.p12
+          openssl pkcs12 -legacy -in /tmp/api.p12 -out /tmp/api.pem \
+            -nodes -passin "pass:$VES_P12_PASSWORD"
+
+          HTTP_STATUS=$(curl -sS -o /tmp/oas_delete_response.json -w '%{http_code}' -X DELETE \
+            --cert /tmp/api.pem --key /tmp/api.pem \
+            "${API_URL}/object_store/namespaces/${NS}/stored_objects/swagger/${NAME}")
+
+          if [ "$HTTP_STATUS" -ge 400 ] && [ "$HTTP_STATUS" -ne 404 ]; then
+            echo "OAS stored object delete failed with HTTP $HTTP_STATUS:" >&2
+            cat /tmp/oas_delete_response.json >&2
+            exit 1
+          fi
+
+          rm -f /tmp/api.p12 /tmp/api.pem
+
+      - name: Delete XC namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          UC_XC="$GITHUB_WORKSPACE/config/uc4/xc/env.json"
+          API_URL=$(jq -r .xc_base.api_url "$UC_XC")
+          NS=$(jq -r .xc_base.xc_namespace "$UC_XC")
+          CREATE_NS=$(jq -r '.xc_base.create_namespace // true' "$UC_XC")
+
+          if [ "$CREATE_NS" != "true" ]; then
+            echo "create_namespace is false; leaving namespace $NS in place."
+            exit 0
+          fi
+
+          echo "$VES_P12_CONTENT" | base64 -d > /tmp/api.p12
+          openssl pkcs12 -legacy -in /tmp/api.p12 -out /tmp/api.pem \
+            -nodes -passin "pass:$VES_P12_PASSWORD"
+
+          INV_BODY=$(jq -n --arg ns "$NS" '{namespace: $ns}')
+          INV_RESPONSE=$(curl -sS --cert /tmp/api.pem --key /tmp/api.pem \
+            -H "Content-Type: application/json" \
+            -d "$INV_BODY" \
+            "${API_URL}/config/namespaces/${NS}/application_inventory")
+
+          LBS=$(echo "$INV_RESPONSE" | jq -r '.loadbalancers // 0')
+          POOLS=$(echo "$INV_RESPONSE" | jq -r '.origin_pools // 0')
+          SVCS=$(echo "$INV_RESPONSE" | jq -r '.services_discovered // 0')
+
+          if [ "$LBS" != "0" ] || [ "$POOLS" != "0" ] || [ "$SVCS" != "0" ]; then
+            echo "Namespace $NS is not empty (loadbalancers=$LBS, origin_pools=$POOLS, services_discovered=$SVCS); refusing to delete." >&2
+            echo "$INV_RESPONSE" >&2
+            exit 1
+          fi
+
+          NS_BODY=$(jq -n --arg name "$NS" '{name: $name}')
+          NS_HTTP_STATUS=$(curl -sS -o /tmp/ns_delete_response.json -w '%{http_code}' -X POST \
+            --cert /tmp/api.pem --key /tmp/api.pem \
+            -H "Content-Type: application/json" \
+            -d "$NS_BODY" \
+            "${API_URL}/web/namespaces/${NS}/cascade_delete")
+
+          if [ "$NS_HTTP_STATUS" -ge 400 ] && [ "$NS_HTTP_STATUS" -ne 404 ]; then
+            echo "XC namespace cascade_delete failed with HTTP $NS_HTTP_STATUS:" >&2
+            cat /tmp/ns_delete_response.json >&2
+            exit 1
+          fi
+
+          rm -f /tmp/api.p12 /tmp/api.pem
+
+  terraform_app_destroy:
+    name: "Destroy: App"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: [precheck_state_bucket, terraform_xc_destroy]
+    defaults:
+      run:
+        working-directory: ./app/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/app.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_APP="$GITHUB_WORKSPACE/config/uc4/app/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+
+            tf_state_bucket:    "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+            k8s_state_prefix:   "state/uc4/k8s",
+            k8s_ingress_state_prefix: "state/uc4/ngf",
+
+            namespace:                (.app.namespace                // "comfy-capybara"),
+            chart_repository:         (.app.chart_repository         // "oci://ghcr.io/knowbase/charts"),
+            chart_name:               (.app.chart_name               // "comfy-capybara"),
+            chart_version:            (.app.chart_version            // "0.1.0"),
+            app_host:                 (.app.app_host                 // "comfy.example.com"),
+            image_registry:           (.app.image_registry           // ""),
+            image_tag:                (.app.image_tag                // ""),
+            image_pull_secret_name:   (.app.image_pull_secret_name   // ""),
+            route_type:               (.app.route_type               // "httproute")
+          }' "$COMMON" "$UC_APP" > /tmp/app.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Allow runner IP through GKE control plane authorized networks
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          K8S_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc4/k8s/default.tfstate")"
+          CLUSTER_NAME=$(jq -r '.outputs.cluster_name.value' <<<"$K8S_STATE")
+          CLUSTER_LOCATION=$(jq -r '.outputs.cluster_location.value' <<<"$K8S_STATE")
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          RUNNER_IP=$(curl -sf https://ifconfig.me)
+          if [ -z "$RUNNER_IP" ]; then
+            echo "Failed to detect runner egress IP" >&2
+            exit 1
+          fi
+
+          CIDR_LIST=$(jq -rn \
+            --slurpfile common "$COMMON" \
+            --slurpfile uc "$UC_GCP" \
+            --arg runner "${RUNNER_IP}/32" \
+            '($common[0].admin_src_addr // []) + ($uc[0].k8s.master_authorized_networks_extra // []) + [$runner] | unique | join(",")')
+
+          echo "Updating $CLUSTER_NAME authorized networks: $CIDR_LIST"
+          gcloud container clusters update "$CLUSTER_NAME" \
+            --project="$PROJECT_ID" \
+            --location="$CLUSTER_LOCATION" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks "$CIDR_LIST"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/app"
+
+      - name: Terraform Plan (destroy)
+        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/app.tfvars.json
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -input=false -var-file=/tmp/app.tfvars.json
+
+  terraform_ngf_destroy:
+    name: "Destroy: NGF"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: [precheck_state_bucket, terraform_app_destroy]
+    defaults:
+      run:
+        working-directory: ./f5/ngf/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+      TF_VAR_nginx_jwt: ${{ secrets.NGINX_JWT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/ngf.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+
+            tf_state_bucket:    "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+            k8s_state_prefix:   "state/uc4/k8s",
+
+            namespace:                   (.ngf.namespace                   // "nginx-gateway"),
+            chart_version:               (.ngf.chart_version               // "2.6.4"),
+            gatewayclass_name:           (.ngf.gatewayclass_name           // "nginx"),
+            nginx_plus_image_repository: (.ngf.nginx_plus_image_repository // "private-registry.nginx.com/nginx-gateway-fabric/nginx-plus"),
+            nginx_plus_image_tag:        (.ngf.nginx_plus_image_tag        // "2.6.4"),
+            gateway_api_crds_url:        (.ngf.gateway_api_crds_url        // "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml")
+          }' "$COMMON" "$UC_GCP" > /tmp/ngf.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Allow runner IP through GKE control plane authorized networks
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          K8S_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc4/k8s/default.tfstate")"
+          CLUSTER_NAME=$(jq -r '.outputs.cluster_name.value' <<<"$K8S_STATE")
+          CLUSTER_LOCATION=$(jq -r '.outputs.cluster_location.value' <<<"$K8S_STATE")
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          RUNNER_IP=$(curl -sf https://ifconfig.me)
+          if [ -z "$RUNNER_IP" ]; then
+            echo "Failed to detect runner egress IP" >&2
+            exit 1
+          fi
+
+          CIDR_LIST=$(jq -rn \
+            --slurpfile common "$COMMON" \
+            --slurpfile uc "$UC_GCP" \
+            --arg runner "${RUNNER_IP}/32" \
+            '($common[0].admin_src_addr // []) + ($uc[0].k8s.master_authorized_networks_extra // []) + [$runner] | unique | join(",")')
+
+          echo "Updating $CLUSTER_NAME authorized networks: $CIDR_LIST"
+          gcloud container clusters update "$CLUSTER_NAME" \
+            --project="$PROJECT_ID" \
+            --location="$CLUSTER_LOCATION" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks "$CIDR_LIST"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/ngf"
+
+      - name: Terraform Plan (destroy)
+        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/ngf.tfvars.json
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -input=false -var-file=/tmp/ngf.tfvars.json
+
+  terraform_k8s_destroy:
+    name: "Destroy: GKE"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: [precheck_state_bucket, terraform_ngf_destroy]
+    defaults:
+      run:
+        working-directory: ./k8s/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/k8s.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+            gcp_zone,
+
+            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+
+            admin_src_addr,
+
+            release_channel:                  (.k8s.release_channel // "REGULAR"),
+            node_machine_type:                (.k8s.node_machine_type // "e2-standard-4"),
+            node_count:                       (.k8s.node_count // 2),
+            node_disk_size_gb:                (.k8s.node_disk_size_gb // 50),
+            node_disk_type:                   (.k8s.node_disk_type // "pd-balanced"),
+            node_service_account:             (.k8s.gcp_runtime_service_account_email // ""),
+            master_ipv4_cidr_block:           (.k8s.master_ipv4_cidr_block // "172.16.0.0/28"),
+            master_authorized_networks_extra: (.k8s.master_authorized_networks_extra // [])
+          }' "$COMMON" "$UC_GCP" > /tmp/k8s.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/k8s"
+
+      - name: Terraform Plan (destroy)
+        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/k8s.tfvars.json
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -input=false -var-file=/tmp/k8s.tfvars.json
+
+  terraform_infra_destroy:
+    name: "Destroy: Infra"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: [precheck_state_bucket, terraform_k8s_destroy]
+    defaults:
+      run:
+        working-directory: ./infra/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/infra.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+            project_prefix,
+            resource_owner,
+            admin_src_addr,
+
+            k8s_ingress: ( .features.k8s_ingress // false ),
+            bigip:  ( .features.bigip // false ),
+            gke:    ( .features.gke // false )
+          }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Sweep orphaned GKE LoadBalancer firewall rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          INFRA_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc4/infra/default.tfstate" 2>/dev/null || true)"
+          if [ -z "$INFRA_STATE" ]; then
+            echo "No infra state; nothing to sweep."
+            exit 0
+          fi
+
+          NETWORK=$(jq -r '.outputs.vpc_network_name.value // empty' <<<"$INFRA_STATE")
+          if [ -z "$NETWORK" ]; then
+            echo "No vpc_network_name in infra state; nothing to sweep."
+            exit 0
+          fi
+
+          # Clean up GKE-managed firewall rules orphaned on the network.
+          FWS=$(gcloud compute firewall-rules list \
+            --project="$PROJECT_ID" \
+            --filter="network~/${NETWORK}\$ AND (name~^k8s- OR name~^gke-)" \
+            --format="value(name)")
+
+          if [ -z "$FWS" ]; then
+            echo "No orphaned GKE firewall rules on $NETWORK."
+            exit 0
+          fi
+
+          echo "Deleting orphaned firewall rules on $NETWORK:"
+          echo "$FWS"
+          while IFS= read -r fw; do
+            [ -n "$fw" ] && gcloud compute firewall-rules delete "$fw" --project="$PROJECT_ID" --quiet || true
+          done <<< "$FWS"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/infra"
+
+      - name: Terraform Plan (destroy)
+        run: terraform plan -destroy -no-color -input=false -var-file=/tmp/infra.tfvars.json
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve -input=false -var-file=/tmp/infra.tfvars.json
+
+  delete_state_bucket:
+    name: "Delete State Bucket"
+    if: needs.precheck_state_bucket.outputs.bucket_exists == 'true'
+    runs-on: ubuntu-latest
+    needs: [precheck_state_bucket, terraform_infra_destroy]
+    env:
+      TF_STATE_BUCKET: ${{ needs.precheck_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Delete state bucket (contents + bucket)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET="gs://${TF_STATE_BUCKET}"
+
+          if gcloud storage buckets describe "$BUCKET" >/dev/null 2>&1; then
+            echo "Deleting bucket + all contents: $BUCKET"
+            gcloud storage rm -r "$BUCKET" || true
+
+            if gcloud storage buckets describe "$BUCKET" >/dev/null 2>&1; then
+              echo "Bucket still exists after rm -r; deleting explicitly."
+              gcloud storage buckets delete "$BUCKET" || true
+            else
+              echo "Bucket already deleted."
+            fi
+          else
+            echo "Bucket not found (already deleted): $BUCKET"
+          fi

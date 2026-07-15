@@ -1,4 +1,6 @@
 resource "kubectl_manifest" "virtualserver" {
+  count = var.route_type == "virtualserver" ? 1 : 0
+
   yaml_body = yamlencode({
     apiVersion = "k8s.nginx.org/v1"
     kind       = "VirtualServer"

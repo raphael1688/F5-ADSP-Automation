@@ -26,10 +26,9 @@ variable "k8s_state_prefix" {
   description = "GCS prefix where k8s state is stored."
 }
 
-variable "nic_state_prefix" {
+variable "k8s_ingress_state_prefix" {
   type        = string
-  default     = "state/uc2/nic"
-  description = "GCS prefix where NIC + NAP state is stored."
+  description = "GCS prefix where the ingress data-plane (NIC or NGF) state is stored."
 }
 
 variable "namespace" {
@@ -107,4 +106,15 @@ variable "attach_waf_to_api_route" {
   type        = bool
   default     = true
   description = "Attach the NIC waf-policy at the /api route (overrides server-wide policies on that route)."
+}
+
+variable "route_type" {
+  type        = string
+  default     = "virtualserver"
+  description = "Routing resource to create: \"virtualserver\" (NIC) or \"httproute\" (NGF Gateway API)."
+
+  validation {
+    condition     = contains(["virtualserver", "httproute"], var.route_type)
+    error_message = "route_type must be \"virtualserver\" or \"httproute\"."
+  }
 }

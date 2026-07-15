@@ -54,6 +54,11 @@ jobs:
           terraform -chdir=f5/nic/gcp init -backend=false
           terraform -chdir=f5/nic/gcp validate -no-color
 
+      - name: Validate ngf
+        run: |
+          terraform -chdir=f5/ngf/gcp init -backend=false
+          terraform -chdir=f5/ngf/gcp validate -no-color
+
       - name: Validate app
         run: |
           terraform -chdir=app/gcp init -backend=false
@@ -63,3 +68,13 @@ jobs:
         run: |
           terraform -chdir=f5/xc init -backend=false
           terraform -chdir=f5/xc validate -no-color
+
+      - name: Validate asle-base
+        run: |
+          terraform -chdir=f5/asle-base/gcp init -backend=false
+          terraform -chdir=f5/asle-base/gcp validate -no-color
+
+      - name: Validate asle-config
+        run: |
+          terraform -chdir=f5/asle-config/gcp init -backend=false
+          terraform -chdir=f5/asle-config/gcp validate -no-color

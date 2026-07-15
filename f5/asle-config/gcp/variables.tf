@@ -26,6 +26,12 @@ variable "bigip_base_state_prefix" {
   default     = "state/uc3/bigip-base"
 }
 
+variable "backend_bigip_base" {
+  type        = bool
+  description = "Whether to reference bigip-base remote state for the BIG-IP onboarding IP/password."
+  default     = true
+}
+
 variable "bundle_gcs_path" {
   type        = string
   description = "GCS object path (relative to the state bucket) where the ASLE config bundle is uploaded."

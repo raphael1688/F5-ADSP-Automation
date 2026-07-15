@@ -1,8 +1,17 @@
+# The LoadBalancer Service and its external IP are provisioned asynchronously
+# after the Helm release installs. Give GCP time to assign it.
+resource "time_sleep" "wait_dataplane" {
+  depends_on      = [helm_release.nginx_ingress]
+  create_duration = "180s"
+}
+
 data "kubernetes_service_v1" "nic" {
   metadata {
     name      = "${helm_release.nginx_ingress.name}-nginx-ingress-controller"
     namespace = helm_release.nginx_ingress.namespace
   }
+
+  depends_on = [time_sleep.wait_dataplane]
 }
 
 output "nic_namespace" {
@@ -15,7 +24,7 @@ output "nic_service_name" {
   description = "Kubernetes Service name for the NIC LoadBalancer."
 }
 
-output "nic_external_ip" {
+output "k8s_ingress_external_ip" {
   value       = try(data.kubernetes_service_v1.nic.status[0].load_balancer[0].ingress[0].ip, null)
   description = "External IP assigned to the NIC LoadBalancer Service. Used as the XC origin."
 }

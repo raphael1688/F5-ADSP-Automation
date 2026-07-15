@@ -109,10 +109,8 @@ jobs:
             admin_src_addr,
 
             # feature flags expected by infra variables.tf
-            nap: ( .features.nap // false ),
-            nic: ( .features.nginx_ingress_controller // false ),
-            bigip: ( .features.bigip // false ),
-            "bigip_cis": ( .features.bigip_cis // false )
+            k8s_ingress: ( .features.k8s_ingress // false ),
+            bigip: ( .features.bigip // false )
           }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
 
       - name: Auth to Google Cloud (WIF)
@@ -167,7 +165,6 @@ jobs:
           jq -s '.[0] * .[1] | {
             gcp_project_id,
             gcp_region,
-            gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
             infra_state_prefix: "state/uc3/infra",
@@ -178,21 +175,10 @@ jobs:
             boot_disk_gb: (.compute.boot_disk_gb // 20),
             assign_public_ip: (.compute.assign_public_ip // false),
             enable_oslogin: (.compute.enable_oslogin // false),
-            install_docker_compose: (.compute.install_docker_compose // true),
 
             vm_create_comfy_capybara: (.compute.vm_create_comfy_capybara // false),
-            vm_create_asle: (.compute.vm_create_asle // false),
             comfy_compose_artifact: (.compute.comfy_compose_artifact // "ghcr.io/knowbase/comfy-capybara-compose"),
-            comfy_compose_tag: (.compute.comfy_compose_tag // "0.3.0"),
-            asle_tarball_gcs_uri: (.compute.asle_tarball_gcs_uri // ""),
-            asle_image_ref: (.compute.asle_image_ref // ""),
-            asle_management_port: (.compute.asle_management_port // 8000),
-            asle_telemetry_port: (.compute.asle_telemetry_port // 0),
-            asle_config_bundle_gcs_uri: ("gs://" + "'"${TF_STATE_BUCKET}"'" + "/artifacts/uc3/asle/bundle.json"),
-            asle_poller_image: (.compute.asle_poller_image // "google/cloud-sdk:slim"),
-            asle_poller_interval_seconds: (.compute.asle_poller_interval_seconds // 30),
-            asle_machine_type: (.compute.asle_machine_type // "e2-custom-2-4096"),
-            asle_boot_disk_gb: (.compute.asle_boot_disk_gb // 30)
+            comfy_compose_tag: (.compute.comfy_compose_tag // "0.3.0")
           }' "$COMMON" "$UC_GCP" > /tmp/compute.tfvars.json
 
       - name: Resolve SSH public key for compute
@@ -255,7 +241,7 @@ jobs:
   terraform_bigip_config:
     name: "Terraform: BIG-IP Config"
     runs-on: ubuntu-latest
-    needs: [bootstrap_state_bucket, terraform_compute, terraform_bigip_base]
+    needs: [bootstrap_state_bucket, terraform_compute, terraform_bigip_base, terraform_asle_base]
     defaults:
       run:
         working-directory: ./f5/bigip-config/gcp
@@ -281,9 +267,11 @@ jobs:
             infra_state_prefix: "state/uc3/infra",
             compute_state_prefix: "state/uc3/compute",
             bigip_base_state_prefix: "state/uc3/bigip-base",
+            asle_base_state_prefix: "state/uc3/asle-base",
 
             backend_compute: (.bigip_config.backend_compute // true),
             backend_bigip_base: (.bigip_config.backend_bigip_base // true),
+            backend_asle_base: (.bigip_config.backend_asle_base // true),
 
             awaf_config_payload: (.bigip_config.awaf_config_payload // "../config/uc3-config.json.tftpl"),
             app_server_ip: (.bigip_config.app_server_ip // ""),
@@ -365,7 +353,6 @@ jobs:
 
             f5_username: (.bigip_base.f5_username // "admin"),
 
-            nic_count: (.bigip_base.nic_count // "true"),
             asm: (.bigip_base.asm // "none"),
             apm: (.bigip_base.apm // "none")
           }' "$COMMON" "$UC_GCP" > /tmp/bigip-base.tfvars.json
@@ -420,6 +407,107 @@ jobs:
         if: github.ref == 'refs/heads/deploy-adsp-uc3'
         run: terraform apply -auto-approve -input=false -var-file=/tmp/bigip-base.tfvars.json
 
+  terraform_asle_base:
+    name: "Terraform: ASLE Base"
+    runs-on: ubuntu-latest
+    needs: [bootstrap_state_bucket, terraform_infra]
+    defaults:
+      run:
+        working-directory: ./f5/asle-base/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/asle-base.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc3/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+
+            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc3/infra",
+
+            gcp_runtime_service_account_email: .compute.gcp_runtime_service_account_email,
+
+            machine_type: (.compute.asle_machine_type // "e2-custom-2-4096"),
+            boot_disk_gb: (.compute.asle_boot_disk_gb // 30),
+            assign_public_ip: (.compute.assign_public_ip // false),
+            enable_oslogin: (.compute.enable_oslogin // false),
+
+            asle_tarball_gcs_uri: (.compute.asle_tarball_gcs_uri // ""),
+            asle_image_ref: (.compute.asle_image_ref // ""),
+            asle_management_port: (.compute.asle_management_port // 8000),
+            asle_telemetry_port: (.compute.asle_telemetry_port // 0),
+            asle_config_bundle_gcs_uri: ("gs://" + "'"${TF_STATE_BUCKET}"'" + "/artifacts/uc3/asle/bundle.json"),
+            asle_poller_image: (.compute.asle_poller_image // "google/cloud-sdk:slim"),
+            asle_poller_interval_seconds: (.compute.asle_poller_interval_seconds // 30)
+          }' "$COMMON" "$UC_GCP" > /tmp/asle-base.tfvars.json
+
+      - name: Resolve SSH public key for ASLE
+        shell: bash
+        env:
+          SSH_PUB: ${{ secrets.SSH_PUB }}
+        run: |
+          set -euo pipefail
+          COMMITTED_KEY="$GITHUB_WORKSPACE/config/common/ssh/demo_bigip.pub"
+
+          if [[ -n "${SSH_PUB:-}" ]]; then
+            echo "Using SSH_PUB secret for ASLE SSH access"
+            printf '%s\n' "$SSH_PUB" | sed 's/\r$//' > /tmp/ssh_pub
+            chmod 600 /tmp/ssh_pub
+          elif [[ -f "$COMMITTED_KEY" ]]; then
+            echo "Using committed key for ASLE SSH access"
+            cp "$COMMITTED_KEY" /tmp/ssh_pub
+            chmod 600 /tmp/ssh_pub
+          else
+            echo "No SSH_PUB provided; ASLE VM will use generated key only"
+          fi
+
+          if [[ -f /tmp/ssh_pub ]]; then
+            DELIM="EOFKEY_$(date +%s%N)"
+            {
+              echo "TF_VAR_ssh_pub<<$DELIM"
+              cat /tmp/ssh_pub
+              echo "$DELIM"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc3/asle-base"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
+        run: terraform plan -no-color -input=false -var-file=/tmp/asle-base.tfvars.json
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/deploy-adsp-uc3'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/asle-base.tfvars.json
+
   terraform_asle_config:
     name: "Terraform: ASLE Config"
     runs-on: ubuntu-latest
@@ -448,6 +536,7 @@ jobs:
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
             infra_state_prefix: "state/uc3/infra",
             bigip_base_state_prefix: "state/uc3/bigip-base",
+            backend_bigip_base: (.asle_config.backend_bigip_base // true),
 
             bundle_gcs_path: "artifacts/uc3/asle/bundle.json",
 

@@ -1,0 +1,691 @@
+name: "Deploy GCP ADSP Use-Case 4"
+
+on:
+  push:
+    branches:
+      - deploy-adsp-uc4
+      - test-adsp-uc4
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_CLI_ARGS: "-no-color"
+
+jobs:
+  bootstrap_state_bucket:
+    name: "Bootstrap: GCS state bucket"
+    runs-on: ubuntu-latest
+    outputs:
+      tf_state_bucket: ${{ steps.out.outputs.tf_state_bucket }}
+      gcp_project_id: ${{ steps.out.outputs.gcp_project_id }}
+      gcp_region: ${{ steps.out.outputs.gcp_region }}
+      gcp_zone: ${{ steps.out.outputs.gcp_zone }}
+      project_prefix: ${{ steps.out.outputs.project_prefix }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Read common config + derive bucket
+        id: out
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON_JSON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+
+          GCP_PROJECT_ID="$(jq -r .gcp_project_id "$COMMON_JSON")"
+          GCP_REGION="$(jq -r .gcp_region "$COMMON_JSON")"
+          GCP_ZONE="$(jq -r .gcp_zone "$COMMON_JSON")"
+          PROJECT_PREFIX="$(jq -r .project_prefix "$COMMON_JSON")"
+
+          TF_STATE_BUCKET="${PROJECT_PREFIX}-state-bucket"
+
+          echo "gcp_project_id=${GCP_PROJECT_ID}" >> "$GITHUB_OUTPUT"
+          echo "gcp_region=${GCP_REGION}" >> "$GITHUB_OUTPUT"
+          echo "gcp_zone=${GCP_ZONE}" >> "$GITHUB_OUTPUT"
+          echo "project_prefix=${PROJECT_PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "tf_state_bucket=${TF_STATE_BUCKET}" >> "$GITHUB_OUTPUT"
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Ensure state bucket exists + settings
+        shell: bash
+        env:
+          TF_STATE_BUCKET: ${{ steps.out.outputs.tf_state_bucket }}
+          GCP_REGION: ${{ steps.out.outputs.gcp_region }}
+        run: |
+          set -euo pipefail
+
+          if gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" >/dev/null 2>&1; then
+            echo "State bucket exists: ${TF_STATE_BUCKET}"
+          else
+            echo "Creating state bucket: ${TF_STATE_BUCKET}"
+            gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
+              --location="${GCP_REGION}" \
+              --uniform-bucket-level-access
+          fi
+
+          gcloud storage buckets update "gs://${TF_STATE_BUCKET}" \
+            --versioning \
+            --public-access-prevention
+
+  terraform_infra:
+    name: "Terraform: Infra"
+    runs-on: ubuntu-latest
+    needs: bootstrap_state_bucket
+    defaults:
+      run:
+        working-directory: ./infra/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/infra.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+            project_prefix,
+            resource_owner,
+            admin_src_addr,
+
+            # feature flags expected by infra variables.tf
+            k8s_ingress: ( .features.k8s_ingress // false ),
+            bigip:  ( .features.bigip // false ),
+            gke:    ( .features.gke // false )
+          }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/infra"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform plan -no-color -input=false -var-file=/tmp/infra.tfvars.json
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/infra.tfvars.json
+
+  terraform_k8s:
+    name: "Terraform: GKE"
+    runs-on: ubuntu-latest
+    needs: [bootstrap_state_bucket, terraform_infra]
+    defaults:
+      run:
+        working-directory: ./k8s/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/k8s.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+            gcp_zone,
+
+            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+
+            admin_src_addr,
+
+            release_channel:                  (.k8s.release_channel // "REGULAR"),
+            node_machine_type:                (.k8s.node_machine_type // "e2-standard-4"),
+            node_count:                       (.k8s.node_count // 2),
+            node_disk_size_gb:                (.k8s.node_disk_size_gb // 50),
+            node_disk_type:                   (.k8s.node_disk_type // "pd-balanced"),
+            node_service_account:             (.k8s.gcp_runtime_service_account_email // ""),
+            master_ipv4_cidr_block:           (.k8s.master_ipv4_cidr_block // "172.16.0.0/28"),
+            master_authorized_networks_extra: (.k8s.master_authorized_networks_extra // [])
+          }' "$COMMON" "$UC_GCP" > /tmp/k8s.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/k8s"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform plan -no-color -input=false -var-file=/tmp/k8s.tfvars.json
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/k8s.tfvars.json
+
+  terraform_ngf:
+    name: "Terraform: NGF"
+    runs-on: ubuntu-latest
+    needs: [bootstrap_state_bucket, terraform_k8s]
+    defaults:
+      run:
+        working-directory: ./f5/ngf/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+      TF_VAR_nginx_jwt: ${{ secrets.NGINX_JWT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/ngf.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+
+            tf_state_bucket:    "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+            k8s_state_prefix:   "state/uc4/k8s",
+
+            namespace:                   (.ngf.namespace                   // "nginx-gateway"),
+            chart_version:               (.ngf.chart_version               // "2.6.4"),
+            gatewayclass_name:           (.ngf.gatewayclass_name           // "nginx"),
+            nginx_plus_image_repository: (.ngf.nginx_plus_image_repository // "private-registry.nginx.com/nginx-gateway-fabric/nginx-plus"),
+            nginx_plus_image_tag:        (.ngf.nginx_plus_image_tag        // "2.6.4"),
+            gateway_api_crds_url:        (.ngf.gateway_api_crds_url        // "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml")
+          }' "$COMMON" "$UC_GCP" > /tmp/ngf.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Allow runner IP through GKE control plane authorized networks
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          K8S_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc4/k8s/default.tfstate")"
+          CLUSTER_NAME=$(jq -r '.outputs.cluster_name.value' <<<"$K8S_STATE")
+          CLUSTER_LOCATION=$(jq -r '.outputs.cluster_location.value' <<<"$K8S_STATE")
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          RUNNER_IP=$(curl -sf https://ifconfig.me)
+          if [ -z "$RUNNER_IP" ]; then
+            echo "Failed to detect runner egress IP" >&2
+            exit 1
+          fi
+
+          CIDR_LIST=$(jq -rn \
+            --slurpfile common "$COMMON" \
+            --slurpfile uc "$UC_GCP" \
+            --arg runner "${RUNNER_IP}/32" \
+            '($common[0].admin_src_addr // []) + ($uc[0].k8s.master_authorized_networks_extra // []) + [$runner] | unique | join(",")')
+
+          echo "Updating $CLUSTER_NAME authorized networks: $CIDR_LIST"
+          gcloud container clusters update "$CLUSTER_NAME" \
+            --project="$PROJECT_ID" \
+            --location="$CLUSTER_LOCATION" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks "$CIDR_LIST"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/ngf"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform plan -no-color -input=false -var-file=/tmp/ngf.tfvars.json
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/ngf.tfvars.json
+
+  terraform_app:
+    name: "Terraform: App"
+    runs-on: ubuntu-latest
+    needs: [bootstrap_state_bucket, terraform_ngf]
+    defaults:
+      run:
+        working-directory: ./app/gcp
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write /tmp/app.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_APP="$GITHUB_WORKSPACE/config/uc4/app/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id,
+            gcp_region,
+
+            tf_state_bucket:    "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+            k8s_state_prefix:   "state/uc4/k8s",
+            k8s_ingress_state_prefix: "state/uc4/ngf",
+
+            namespace:                (.app.namespace                // "comfy-capybara"),
+            chart_repository:         (.app.chart_repository         // "oci://ghcr.io/knowbase/charts"),
+            chart_name:               (.app.chart_name               // "comfy-capybara"),
+            chart_version:            (.app.chart_version            // "0.1.0"),
+            app_host:                 (.app.app_host                 // "comfy.example.com"),
+            image_registry:           (.app.image_registry           // ""),
+            image_tag:                (.app.image_tag                // ""),
+            image_pull_secret_name:   (.app.image_pull_secret_name   // ""),
+            route_type:               (.app.route_type               // "httproute")
+          }' "$COMMON" "$UC_APP" > /tmp/app.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Allow runner IP through GKE control plane authorized networks
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          K8S_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc4/k8s/default.tfstate")"
+          CLUSTER_NAME=$(jq -r '.outputs.cluster_name.value' <<<"$K8S_STATE")
+          CLUSTER_LOCATION=$(jq -r '.outputs.cluster_location.value' <<<"$K8S_STATE")
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          RUNNER_IP=$(curl -sf https://ifconfig.me)
+          if [ -z "$RUNNER_IP" ]; then
+            echo "Failed to detect runner egress IP" >&2
+            exit 1
+          fi
+
+          CIDR_LIST=$(jq -rn \
+            --slurpfile common "$COMMON" \
+            --slurpfile uc "$UC_GCP" \
+            --arg runner "${RUNNER_IP}/32" \
+            '($common[0].admin_src_addr // []) + ($uc[0].k8s.master_authorized_networks_extra // []) + [$runner] | unique | join(",")')
+
+          echo "Updating $CLUSTER_NAME authorized networks: $CIDR_LIST"
+          gcloud container clusters update "$CLUSTER_NAME" \
+            --project="$PROJECT_ID" \
+            --location="$CLUSTER_LOCATION" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks "$CIDR_LIST"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/app"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform plan -no-color -input=false -var-file=/tmp/app.tfvars.json
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/app.tfvars.json
+
+  terraform_xc:
+    name: "Terraform: F5 XC"
+    runs-on: ubuntu-latest
+    needs: [bootstrap_state_bucket, terraform_app]
+    defaults:
+      run:
+        working-directory: ./f5/xc
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+      VES_P12_CONTENT: ${{ secrets.VES_P12_CONTENT }}
+      VES_P12_PASSWORD: ${{ secrets.VES_P12_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Upload OAS to XC object store
+        shell: bash
+        run: |
+          set -euo pipefail
+          UC_XC="$GITHUB_WORKSPACE/config/uc4/xc/env.json"
+          OAS_DIR="$GITHUB_WORKSPACE/config/uc4/app/oas"
+
+          API_URL=$(jq -r .xc_base.api_url "$UC_XC")
+          NS=$(jq -r .xc_base.xc_namespace "$UC_XC")
+          NAME="uc4-app-oas"
+
+          OAS_FILE=""
+          OAS_FORMAT=""
+          for f in openapi.json openapi.yaml openapi.yml; do
+            if [ -f "$OAS_DIR/$f" ]; then
+              OAS_FILE="$OAS_DIR/$f"
+              case "$f" in
+                *.json) OAS_FORMAT=json ;;
+                *.yaml|*.yml) OAS_FORMAT=yaml ;;
+              esac
+              break
+            fi
+          done
+          if [ -z "$OAS_FILE" ]; then
+            echo "No OAS spec found at $OAS_DIR/openapi.{json,yaml,yml}." >&2
+            exit 1
+          fi
+
+          echo "$VES_P12_CONTENT" | base64 -d > /tmp/api.p12
+          openssl pkcs12 -legacy -in /tmp/api.p12 -out /tmp/api.pem \
+            -nodes -passin "pass:$VES_P12_PASSWORD"
+
+          CREATE_NS=$(jq -r '.xc_base.create_namespace // true' "$UC_XC")
+          if [ "$CREATE_NS" = "true" ]; then
+            NS_BODY=$(jq -n --arg name "$NS" '{metadata: {name: $name}, spec: {}}')
+            NS_HTTP_STATUS=$(curl -sS -o /tmp/ns_response.json -w '%{http_code}' -X POST \
+              --cert /tmp/api.pem --key /tmp/api.pem \
+              -H "Content-Type: application/json" \
+              -d "$NS_BODY" \
+              "${API_URL}/web/namespaces")
+            if [ "$NS_HTTP_STATUS" -ge 400 ] && [ "$NS_HTTP_STATUS" -ne 409 ]; then
+              echo "XC namespace create failed with HTTP $NS_HTTP_STATUS:" >&2
+              cat /tmp/ns_response.json >&2
+              exit 1
+            fi
+          fi
+
+          OAS_B64=$(base64 -w 0 "$OAS_FILE")
+          BODY=$(jq -n \
+            --arg name "$NAME" \
+            --arg ns "$NS" \
+            --arg fmt "$OAS_FORMAT" \
+            --arg data "$OAS_B64" \
+            '{
+              namespace: $ns,
+              object_type: "swagger",
+              name: $name,
+              content_format: $fmt,
+              bytes_value: $data,
+              no_attributes: {}
+            }')
+
+          HTTP_STATUS=$(curl -sS -o /tmp/oas_response.json -w '%{http_code}' -X PUT \
+            --cert /tmp/api.pem --key /tmp/api.pem \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "${API_URL}/object_store/namespaces/${NS}/stored_objects/swagger/${NAME}")
+          RESPONSE=$(cat /tmp/oas_response.json)
+
+          if [ "$HTTP_STATUS" -ge 400 ]; then
+            echo "XC object store PUT failed with HTTP $HTTP_STATUS:" >&2
+            echo "$RESPONSE" >&2
+            exit 1
+          fi
+
+          SPEC_URL=$(echo "$RESPONSE" | jq -r '.metadata.url // empty')
+          if [ -z "$SPEC_URL" ]; then
+            echo "No metadata.url in response:" >&2
+            echo "$RESPONSE" >&2
+            exit 1
+          fi
+
+          echo "TF_VAR_xc_api_spec=[\"$SPEC_URL\"]" >> "$GITHUB_ENV"
+          rm -f /tmp/api.p12 /tmp/api.pem
+
+      - name: Write /tmp/xc.tfvars.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_XC="$GITHUB_WORKSPACE/config/uc4/xc/env.json"
+
+          jq -s '.[0] * .[1] | {
+            gcp_project_id: .gcp_project_id,
+            gcp_region: .gcp_region,
+
+            tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
+            infra_state_prefix: "state/uc4/infra",
+            k8s_ingress_state_prefix: "state/uc4/ngf",
+
+            api_url: .xc_base.api_url,
+            xc_namespace: .xc_base.xc_namespace,
+            create_namespace: false,
+            app_domain: .xc_base.app_domain,
+
+            origin_server: (.xc_base.origin_server // ""),
+            origin_port: ( .xc_base.origin_port | tostring ),
+
+            backend_bigip: (.xc_base.backend_bigip // false),
+            backend_k8s_ingress: (.xc_base.backend_k8s_ingress // true),
+
+            xc_waf_blocking: (.xc_base.xc_waf_blocking // false),
+
+            xc_app_type: (.xc_base.xc_app_type // []),
+            xc_multi_lb: (.xc_base.xc_multi_lb // false),
+
+            xc_byo_cert: (.xc_base.xc_byo_cert // false),
+            xc_byo_cert_name: (.xc_base.xc_byo_cert_name // ""),
+            xc_byo_cert_namespace: (.xc_base.xc_byo_cert_namespace // "shared"),
+
+            xc_api_disc: (.xc_features.xc_api_disc // false),
+            xc_api_pro: (.xc_features.xc_api_pro // false),
+            xc_api_val: (.xc_features.xc_api_val // false),
+            xc_api_val_all: (.xc_features.xc_api_val_all // false),
+            xc_api_val_active: (.xc_features.xc_api_val_active // false),
+            xc_resp_val_active: (.xc_features.xc_resp_val_active // false),
+            xc_api_val_custom: (.xc_features.xc_api_val_custom // false),
+
+            enforcement_block: (.xc_features.enforcement_block // false),
+            enforcement_report: (.xc_features.enforcement_report // false),
+            fall_through_mode_allow: (.xc_features.fall_through_mode_allow // false),
+            fall_through_mode_report: (.xc_features.fall_through_mode_report // false),
+
+            xc_jwt_val: (.xc_features.xc_jwt_val // false),
+            jwt_val_block: (.xc_features.jwt_val_block // false),
+            jwt_val_report: (.xc_features.jwt_val_report // false),
+            jwks: (.xc_features.jwks // "app_domain"),
+            iss_claim: (.xc_features.iss_claim // false),
+            aud_claim: (.xc_features.aud_claim // [""]),
+            exp_claim: (.xc_features.exp_claim // false),
+
+            xc_bot_def: (.xc_features.xc_bot_def // false),
+            xc_bot_def_advanced: (.xc_features.xc_bot_def_advanced // false),
+            xc_bot_def_advanced_web_policy_name: (.xc_features.xc_bot_def_advanced_web_policy_name // ""),
+            xc_bot_def_advanced_web_policy_namespace: (.xc_features.xc_bot_def_advanced_web_policy_namespace // "shared"),
+            xc_ddos_pro: (.xc_features.xc_ddos_pro // false),
+            xc_l7_ddos_rps_threshold: (.xc_features.xc_l7_ddos_rps_threshold // 100),
+            xc_slow_ddos: (.xc_features.xc_slow_ddos // false),
+            xc_slow_ddos_request_headers_timeout: (.xc_features.xc_slow_ddos_request_headers_timeout // 10),
+            xc_slow_ddos_request_timeout: (.xc_features.xc_slow_ddos_request_timeout // 60),
+            xc_ip_reputation: (.xc_features.xc_ip_reputation // false),
+            xc_ip_threat_categories: (.xc_features.xc_ip_threat_categories // ["SPAM_SOURCES","WINDOWS_EXPLOITS","WEB_ATTACKS","BOTNETS","SCANNERS","DOS_ATTACKS","PHISHING","PROXY","TOR_PROXY"]),
+            xc_threat_mesh: (.xc_features.xc_threat_mesh // false),
+            xc_api_rate_limit: (.xc_features.xc_api_rate_limit // false),
+            xc_api_rate_limit_threshold: (.xc_features.xc_api_rate_limit_threshold // 100),
+            xc_api_rate_limit_unit: (.xc_features.xc_api_rate_limit_unit // "MINUTE"),
+            xc_api_rate_limit_base_path: (.xc_features.xc_api_rate_limit_base_path // "/"),
+            xc_mud: (.xc_features.xc_mud // false),
+            xc_data_guard: (.xc_features.xc_data_guard // false),
+
+            xc_api_crawler: (.xc_features.xc_api_crawler // false),
+            xc_api_auth_discovery: (.xc_features.xc_api_auth_discovery // false),
+            xc_client_side_defense: (.xc_features.xc_client_side_defense // false),
+            xc_waf_exclusion: (.xc_features.xc_waf_exclusion // false),
+            xc_waf_exclusion_policy_name: (.xc_features.xc_waf_exclusion_policy_name // ""),
+            xc_waf_exclusion_policy_namespace: (.xc_features.xc_waf_exclusion_policy_namespace // "shared"),
+            xc_sensitive_data_policy: (.xc_features.xc_sensitive_data_policy // false),
+            xc_sensitive_data_compliances: (.xc_features.xc_sensitive_data_compliances // [])
+          }' "$COMMON" "$UC_XC" > /tmp/xc.tfvars.json
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init (GCS backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=state/uc4/xc"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform plan -no-color -input=false -var-file=/tmp/xc.tfvars.json
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/deploy-adsp-uc4'
+        run: terraform apply -auto-approve -input=false -var-file=/tmp/xc.tfvars.json
+
+  cleanup_authorized_networks:
+    name: "Cleanup: revert GKE control plane authorized networks"
+    if: always() && github.ref == 'refs/heads/deploy-adsp-uc4'
+    runs-on: ubuntu-latest
+    needs: [bootstrap_state_bucket, terraform_app]
+    env:
+      TF_STATE_BUCKET: ${{ needs.bootstrap_state_bucket.outputs.tf_state_bucket }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Reset authorized networks to configured CIDRs
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/config/common/gcp/env.json"
+          UC_GCP="$GITHUB_WORKSPACE/config/uc4/gcp/env.json"
+
+          K8S_STATE="$(gsutil cat "gs://${TF_STATE_BUCKET}/state/uc4/k8s/default.tfstate" 2>/dev/null || true)"
+          if [ -z "$K8S_STATE" ]; then
+            echo "k8s state not present; nothing to clean."
+            exit 0
+          fi
+
+          CLUSTER_NAME=$(jq -r '.outputs.cluster_name.value // empty' <<<"$K8S_STATE")
+          CLUSTER_LOCATION=$(jq -r '.outputs.cluster_location.value // empty' <<<"$K8S_STATE")
+          PROJECT_ID=$(jq -r '.gcp_project_id' "$COMMON")
+
+          if [ -z "$CLUSTER_NAME" ]; then
+            echo "No cluster_name in state; nothing to clean."
+            exit 0
+          fi
+
+          CIDR_LIST=$(jq -rn \
+            --slurpfile common "$COMMON" \
+            --slurpfile uc "$UC_GCP" \
+            '($common[0].admin_src_addr // []) + ($uc[0].k8s.master_authorized_networks_extra // []) | unique | join(",")')
+
+          if [ -z "$CIDR_LIST" ]; then
+            echo "No configured CIDRs; leaving cluster as-is."
+            exit 0
+          fi
+
+          echo "Resetting $CLUSTER_NAME authorized networks to: $CIDR_LIST"
+          gcloud container clusters update "$CLUSTER_NAME" \
+            --project="$PROJECT_ID" \
+            --location="$CLUSTER_LOCATION" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks "$CIDR_LIST"

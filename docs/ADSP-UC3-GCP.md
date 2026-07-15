@@ -68,12 +68,15 @@ The GitHub Actions workflow deploys modules with the following dependencies:
 2. Terraform: Infra (VPC, subnets, firewall, NAT)
    ↓
    ├──> 3a. Terraform: Compute
-   │       (parallel with bigip-base)
+   │       (parallel with bigip-base, asle-base)
    │
-   └──> 3b. Terraform: BIG-IP Base
-           (parallel with compute)
+   ├──> 3b. Terraform: BIG-IP Base
+   │       (parallel with compute, asle-base)
+   │
+   └──> 3c. Terraform: ASLE Base
+           (parallel with compute, bigip-base)
    ↓
-   ├──> 4a. Terraform: BIG-IP Config   (needs compute + bigip-base)
+   ├──> 4a. Terraform: BIG-IP Config   (needs compute + bigip-base + asle-base)
    │
    └──> 4b. Terraform: ASLE Config     (needs bigip-base; parallel with bigip-config)
 ```
@@ -91,7 +94,7 @@ The GitHub Actions workflow deploys modules with the following dependencies:
 - The poller is enabled only when `asle_config_bundle_gcs_uri` is non-empty
 - ASLE itself never needs to be reachable from outside the Docker host; all configuration flows through GCS
 
-Destroy operations run in reverse with parallelism: `(BIG-IP Config || ASLE Config) → (BIG-IP Base || Compute) → Infra → State Bucket`
+Destroy operations run in reverse with parallelism: `(BIG-IP Base || Compute || ASLE Base) → Infra → State Bucket`. There is no separate BIG-IP Config or ASLE Config destroy step — destroying BIG-IP Base and ASLE Base removes the devices those configs targeted.
 
 ---
 
@@ -181,29 +184,56 @@ Configure the following secrets in GitHub repository settings: `Settings → Sec
 If you need to create the Workload Identity Pool:
 
 ```bash
+# Set variables
 PROJECT_ID="your-project-id"
-POOL_NAME="github-actions-pool"
+PROJECT_NUMBER="your-project-number"
+POOL_NAME="${PREFIX}-github-actions-pool"
 PROVIDER_NAME="github-provider"
-SERVICE_ACCOUNT="github-actions-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-REPO="your-github-org/your-repo"
+SA_PREFIX=""
+SA_SUFFIX="github-actions-sa"
+SERVICE_ACCOUNT="${SA_PREFIX}-${SA_SUFFIX}@${PROJECT_ID}.iam.gserviceaccount.com"
+GH_ORGANIZATION="your-github-org"
+GH_REPO="${GH_ORGANIZATION}/your-repo"
 
+# 1. Create the service account
+gcloud iam service-accounts create "${SA_PREFIX}-${SA_SUFFIX}" \
+    --display-name="${SA_PREFIX} GitHub Actions for ADSP Automation" \
+    --project="${PROJECT_ID}"
+
+# 2. Grant the three roles
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/compute.admin"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/storage.admin"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/iam.serviceAccountUser"
+
+# 3. Create Workload Identity Pool
 gcloud iam workload-identity-pools create "${POOL_NAME}" \
   --project="${PROJECT_ID}" \
   --location="global" \
   --display-name="GitHub Actions Pool"
 
+# 4. Create Provider
 gcloud iam workload-identity-pools providers create-oidc "${PROVIDER_NAME}" \
   --project="${PROJECT_ID}" \
   --location="global" \
   --workload-identity-pool="${POOL_NAME}" \
   --display-name="GitHub Provider" \
   --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository_owner == '${GH_ORGANIZATION}'" \
   --issuer-uri="https://token.actions.githubusercontent.com"
 
+# 5. Grant service account access
 gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT}" \
   --project="${PROJECT_ID}" \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/${POOL_NAME}/attribute.repository/${REPO}"
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_NAME}/attribute.repository/${GH_REPO}"
 ```
 
 ---
@@ -255,7 +285,7 @@ Every other compute / bigip_base / bigip_config / asle_config field keeps its ex
 git checkout -b deploy-adsp-uc3 && git push -u origin deploy-adsp-uc3
 ```
 
-Watch the workflow in the Actions tab. Modules run: state bucket → infra → (compute || bigip-base) → (bigip-config || asle-config).
+Watch the workflow in the Actions tab. Modules run: state bucket → infra → (compute || bigip-base || asle-base) → (bigip-config || asle-config).
 
 `test-adsp-uc3` runs validate only. `destroy-adsp-uc3` tears down in reverse order.
 
@@ -276,10 +306,11 @@ F5-ADSP-Automation/
 │   └── uc3/
 │       └── gcp/env.json             # UC3 compute / BIG-IP / ASLE config
 ├── infra/gcp/                       # Network infrastructure
-├── compute/gcp/                     # Docker host VMs (comfy, ASLE)
+├── compute/gcp/                     # Docker host VMs (comfy-capybara)
 ├── f5/
 │   ├── bigip-base/gcp/              # BIG-IP instance
 │   ├── bigip-config/                # AS3 + self-signed cert + iRule (template at config/uc3-config.json.tftpl)
+│   ├── asle-base/gcp/               # ASLE Docker host VM
 │   └── asle-config/gcp/             # Bundle renderer + GCS uploader for the on-VM ASLE poller
 └── docs/
     └── ADSP-UC3-GCP.md              # This document
@@ -290,9 +321,10 @@ F5-ADSP-Automation/
 Remote state is stored in GCS bucket `${project_prefix}-state-bucket`:
 
 - `state/uc3/infra/` - VPC, subnets, firewall rules
-- `state/uc3/compute/` - Comfy + ASLE Docker hosts
+- `state/uc3/compute/` - Comfy-capybara Docker host
 - `state/uc3/bigip-base/` - BIG-IP instance
 - `state/uc3/bigip-config/` - cert resources + AS3 declaration metadata
+- `state/uc3/asle-base/` - ASLE Docker host VM
 - `state/uc3/asle-config/` - bundle GCS object metadata
 - `artifacts/uc3/as3/` - AS3 declaration the BIG-IP polls
 - `artifacts/uc3/asle/` - config bundle the ASLE poller polls
@@ -477,23 +509,23 @@ PROJECT_PREFIX="your-prefix"
 STATE_BUCKET="${PROJECT_PREFIX}-state-bucket"
 
 # BIG-IP management IP
-gsutil cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
   jq -r '.outputs.bigip_public_ip.value'
 
 # BIG-IP admin password (sensitive)
-gsutil cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
   jq -r '.outputs.bigip_admin_password.value'
 
 # Comfy Capybara docker host internal IP
-gsutil cat gs://${STATE_BUCKET}/state/uc3/compute/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc3/compute/default.tfstate | \
   jq -r '.outputs.comfy_capybara_internal_ip.value'
 
 # ASLE docker host internal IP
-gsutil cat gs://${STATE_BUCKET}/state/uc3/compute/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc3/asle-base/default.tfstate | \
   jq -r '.outputs.asle_internal_ip.value'
 
 # ASLE config bundle URI (the poller is watching this)
-gsutil cat gs://${STATE_BUCKET}/state/uc3/asle-config/default.tfstate | \
+gcloud storage cat gs://${STATE_BUCKET}/state/uc3/asle-config/default.tfstate | \
   jq -r '.outputs.bundle_gcs_uri.value'
 ```
 
@@ -505,7 +537,7 @@ gsutil cat gs://${STATE_BUCKET}/state/uc3/asle-config/default.tfstate | \
 | `bigip_mgmt_internal_ip` | bigip-base | BIG-IP internal IP. Used by AS3 for the internal logging VS |
 | `bigip_admin_password` | bigip-base | Generated admin password (sensitive) |
 | `comfy_capybara_internal_ip` | compute | Comfy docker host internal IP |
-| `asle_internal_ip` | compute | ASLE docker host internal IP |
+| `asle_internal_ip` | asle-base | ASLE docker host internal IP |
 | `bundle_gcs_uri` | asle-config | gs:// URI of the ASLE config bundle the poller watches |
 
 ---
@@ -515,9 +547,9 @@ gsutil cat gs://${STATE_BUCKET}/state/uc3/asle-config/default.tfstate | \
 ### BIG-IP Management Access
 
 ```bash
-MGMT_IP=$(gsutil cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
+MGMT_IP=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
   jq -r '.outputs.bigip_public_ip.value')
-ADMIN_PASSWORD=$(gsutil cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
+ADMIN_PASSWORD=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc3/bigip-base/default.tfstate | \
   jq -r '.outputs.bigip_admin_password.value')
 
 echo "BIG-IP GUI: https://${MGMT_IP}:8443"
@@ -557,7 +589,7 @@ curl -sku admin:${ADMIN_PASSWORD} \
 The host is internal-only by default; the BIG-IP reaches it over the VPC. To check from the BIG-IP shell:
 
 ```bash
-COMFY_IP=$(gsutil cat gs://${STATE_BUCKET}/state/uc3/compute/default.tfstate | \
+COMFY_IP=$(gcloud storage cat gs://${STATE_BUCKET}/state/uc3/compute/default.tfstate | \
   jq -r '.outputs.comfy_capybara_internal_ip.value')
 
 # From BIG-IP, frontend exposes 8080
@@ -612,7 +644,7 @@ Alternative: jump from the BIG-IP (which has a public IP) to the ASLE internal I
 
 **Resolution:**
 - State bucket is auto-created by the bootstrap job. Verify it completed
-- Check: `gsutil ls -p PROJECT_ID | grep state-bucket`
+- Check: `gcloud storage ls -p PROJECT_ID | grep state-bucket`
 
 **Error:** `Error acquiring the state lock`
 
@@ -620,8 +652,8 @@ Alternative: jump from the BIG-IP (which has a public IP) to the ASLE internal I
 - Another workflow run may be in progress
 - If stuck, manually remove the lock:
   ```bash
-  gsutil ls gs://${STATE_BUCKET}/state/uc3/MODULE_NAME/default.tflock
-  gsutil rm gs://${STATE_BUCKET}/state/uc3/MODULE_NAME/default.tflock
+  gcloud storage ls gs://${STATE_BUCKET}/state/uc3/MODULE_NAME/default.tflock
+  gcloud storage rm gs://${STATE_BUCKET}/state/uc3/MODULE_NAME/default.tflock
   ```
 
 ### BIG-IP Deployment Issues
@@ -629,7 +661,7 @@ Alternative: jump from the BIG-IP (which has a public IP) to the ASLE internal I
 **Error:** BIG-IP boots but the AS3 declaration is not applied
 
 **Resolution:**
-- Check that the AS3 declaration was uploaded: `gsutil ls gs://${STATE_BUCKET}/artifacts/uc3/as3/`
+- Check that the AS3 declaration was uploaded: `gcloud storage ls gs://${STATE_BUCKET}/artifacts/uc3/as3/`
 - SSH to the BIG-IP and check `/var/log/cloud/as3-pull-apply.log`
 - The onboarding template includes a `pull_and_apply_as3_from_gcs` step that retries; transient failures should self-heal
 - The runtime SA attached to the BIG-IP needs `roles/storage.objectViewer` on the state bucket
@@ -661,7 +693,7 @@ Alternative: jump from the BIG-IP (which has a public IP) to the ASLE internal I
 
 ### ASLE Won't Come Up
 
-**Error:** `gsutil cp` fails on the tarball
+**Error:** `gcloud storage cp` fails on the tarball
 
 **Resolution:**
 - Confirm `asle_tarball_gcs_uri` is a fully qualified gs:// URI
@@ -681,7 +713,7 @@ Alternative: jump from the BIG-IP (which has a public IP) to the ASLE internal I
 **Resolution:**
 - Check journal: `sudo journalctl -u asle-poller.service --no-pager -n 100`
 - The container apt-installs jq and curl at startup; transient network issues during install cause early failures
-- Confirm the bundle exists: `gsutil ls gs://${STATE_BUCKET}/artifacts/uc3/asle/bundle.json`
+- Confirm the bundle exists: `gcloud storage ls gs://${STATE_BUCKET}/artifacts/uc3/asle/bundle.json`
 - The poller does not start if `asle_config_bundle_gcs_uri` is empty in the compute tfvars
 
 **Error:** Bundle is present but ASLE never sees the BIG-IP
@@ -737,7 +769,7 @@ Alternative: jump from the BIG-IP (which has a public IP) to the ASLE internal I
 - **Enable versioning** on state bucket (auto-enabled by workflow)
 - **Back up state** before major changes:
   ```bash
-  gsutil -m cp -r gs://${STATE_BUCKET}/state/uc3 gs://backup-bucket/state-uc3-$(date +%Y%m%d)
+  gcloud storage -m cp -r gs://${STATE_BUCKET}/state/uc3 gs://backup-bucket/state-uc3-$(date +%Y%m%d)
   ```
 - **Clean up old state** after successful destroys
 - **The BIG-IP front-door cert is self-signed and rotated on every bigip-config apply.** A re-apply produces a new declaration MD5, which the BIG-IP picks up on its next AS3 poll.

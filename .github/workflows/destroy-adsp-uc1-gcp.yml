@@ -95,7 +95,6 @@ jobs:
             infra_state_prefix: "state/uc1/infra",
             bigip_state_prefix: "state/uc1/bigip-base",
 
-            xc_tenant: .xc_base.xc_tenant,
             api_url: .xc_base.api_url,
             xc_namespace: .xc_base.xc_namespace,
             app_domain: .xc_base.app_domain,
@@ -228,7 +227,6 @@ jobs:
 
             f5_username: (.bigip_base.f5_username // "admin"),
 
-            nic_count: (.bigip_base.nic_count // "true"),
             asm: (.bigip_base.asm // "none"),
             apm: (.bigip_base.apm // "none")
           }' "$COMMON" "$UC_GCP" > /tmp/bigip-base.tfvars.json
@@ -250,7 +248,7 @@ jobs:
             echo "Committed key not found; writing from SSH_PUB secret"
             KEY_FILE="$GITHUB_WORKSPACE/.generated/ssh_pub.pub"
             mkdir -p "$(dirname "$KEY_FILE")"
-            printf '%s' "$SSH_PUB" > "$KEY_FILE"
+            printf '%s\n' "$SSH_PUB" | sed 's/\r$//' > "$KEY_FILE"
             chmod 644 "$KEY_FILE"
           fi
           echo "TF_VAR_f5_ssh_publickey=$KEY_FILE" >> "$GITHUB_ENV"
@@ -303,7 +301,6 @@ jobs:
           jq -s '.[0] * .[1] | {
             gcp_project_id,
             gcp_region,
-            gcp_zone,
 
             tf_state_bucket: "'"${TF_STATE_BUCKET}"'",
             infra_state_prefix: "state/uc1/infra",
@@ -314,7 +311,6 @@ jobs:
             boot_disk_gb: (.compute.boot_disk_gb // 10),
             assign_public_ip: (.compute.assign_public_ip // true),
             enable_oslogin: (.compute.enable_oslogin // false),
-            install_docker_compose: (.compute.install_docker_compose // true),
 
             vm_create_crapi: (.compute.vm_create_crapi // false),
             vm_create_juice_shop: (.compute.vm_create_juice_shop // false)
@@ -372,10 +368,8 @@ jobs:
             resource_owner,
             admin_src_addr,
 
-            nap: ( .features.nap // false ),
-            nic: ( .features.nginx_ingress_controller // false ),
-            bigip: ( .features.bigip // false ),
-            "bigip_cis": ( .features.bigip_cis // false )
+            k8s_ingress: ( .features.k8s_ingress // false ),
+            bigip: ( .features.bigip // false )
           }' "$COMMON" "$UC_GCP" > /tmp/infra.tfvars.json
 
       - name: Auth to Google Cloud (WIF)

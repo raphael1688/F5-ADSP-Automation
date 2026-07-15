@@ -40,34 +40,11 @@ variable "admin_src_addr" {
   default     = ["0.0.0.0/0"]
   description = "Allowed Admin source CIDR (used by infra firewall rules)."
 }
-variable "mgmt_address_prefixes" {
-  type        = list(string)
-  default     = ["10.1.1.0/24", "10.1.100.0/24"]
-  description = "Management subnet address prefixes"
-}
-variable "ext_address_prefixes" {
-  type        = list(string)
-  default     = ["10.1.10.0/24", "10.1.110.0/24"]
-  description = "External subnet address prefixes"
-}
-variable "int_address_prefixes" {
-  type        = list(string)
-  default     = ["10.1.20.0/24", "10.1.120.0/24"]
-  description = "Internal subnet address prefixes"
-}
-variable "nap" {
-  type    = bool
-  default = false
-}
-variable "nic" {
+variable "k8s_ingress" {
   type    = bool
   default = false
 }
 variable "bigip" {
-  type    = bool
-  default = false
-}
-variable "bigip_cis" {
   type    = bool
   default = false
 }

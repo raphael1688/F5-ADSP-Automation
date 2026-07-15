@@ -109,13 +109,6 @@ variable "gcp_secret_id" {
   description = "Secret identifier used by runtime-init when Secret Manager auth is enabled."
 }
 
-# Deprecated. Single-NIC is hardcoded in locals.tf; this value is ignored.
-variable "nic_count" {
-  type        = string
-  default     = "false"
-  description = "Deprecated. Single-NIC is hardcoded in locals.tf."
-}
-
 variable "DO_URL" {
   description = "URL to download the BIG-IP Declarative Onboarding module"
   type        = string

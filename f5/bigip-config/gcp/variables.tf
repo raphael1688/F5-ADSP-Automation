@@ -48,6 +48,18 @@ variable "backend_bigip_base" {
   default     = false
 }
 
+variable "asle_base_state_prefix" {
+  type        = string
+  description = "GCS prefix where asle-base state is stored."
+  default     = "state/uc3/asle-base"
+}
+
+variable "backend_asle_base" {
+  type        = bool
+  description = "Whether to reference asle-base remote state for ASLE IP."
+  default     = false
+}
+
 variable "app_server_port" {
   type        = number
   description = "Backend application service port."

@@ -33,7 +33,7 @@ The GitHub Actions workflow deploys modules sequentially with dependencies:
    ↓
 4. Terraform: BIG-IP Config (Uploads AS3 declaration to GCS)
    ↓
-5. Terraform: BIG-IP Base (F5 BIG-IP instance — pulls AS3 from GCS on boot)
+5. Terraform: BIG-IP Base (F5 BIG-IP instance; pulls AS3 from GCS on boot)
    ↓
 6. Terraform: F5 XC (Distributed Cloud config)
 ```
@@ -234,7 +234,7 @@ Watch the workflow in the Actions tab. Modules run: state bucket → infra → c
 ## Repository Structure
 
 ```
-crafty-corgi/
+F5-ADSP-Automation/
 ├── .github/workflows/
 │   ├── deploy-adsp-uc1-gcp.yml      # Main deployment workflow
 │   ├── destroy-adsp-uc1-gcp.yml     # Destroy workflow
@@ -263,8 +263,8 @@ crafty-corgi/
 │   │   ├── templates/f5_onboard.tmpl
 │   │   └── outputs.tf
 │   ├── bigip-config/gcp/             # BIG-IP AS3 config
-│   │   ├── bigip-config.tf
-│   │   └── config/awaf-config.json
+│   │   └── bigip-config.tf
+│   ├── bigip-config/config/uc1-config.json  # AS3 payload template
 │   └── xc/                          # F5 Distributed Cloud
 │       ├── main.tf
 │       ├── namespace.tf
@@ -332,10 +332,12 @@ Edit `config/uc1/gcp/env.json`:
     "vm_create_juice_shop": false
   },
   "bigip_base": {
-    "image_name": "projects/f5-7626-networks-public/global/images/f5-bigip-17-1-2-0-0-8-payg-better-25mbps-241121080429",
+    "image_name": "projects/f5-7626-networks-public/global/images/f5-bigip-21-0-0-0-0-10-payg-best-plus-25mbps-251104081529",
     "machine_type": "n2-highmem-4",
+    "min_cpu_platform": "Intel Cascade Lake",
+    "disk_type": "pd-ssd",
+    "disk_size_gb": 120,
     "f5_username": "admin",
-    "nic_count": "false",
     "asm": "nominal",
     "apm": "none"
   },
