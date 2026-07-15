@@ -61,20 +61,3 @@ resource "google_compute_instance" "docker_host" {
     owner = local.resource_owner
   }
 }
-
-# Preserve existing instances across the move to for_each instead of
-# destroying and recreating them.
-moved {
-  from = google_compute_instance.juice_shop[0]
-  to   = google_compute_instance.docker_host["juice-shop"]
-}
-
-moved {
-  from = google_compute_instance.crapi[0]
-  to   = google_compute_instance.docker_host["crapi"]
-}
-
-moved {
-  from = google_compute_instance.comfy_capybara[0]
-  to   = google_compute_instance.docker_host["comfy-capybara"]
-}

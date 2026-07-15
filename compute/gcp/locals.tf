@@ -123,8 +123,6 @@ SERVICE
     systemctl enable --now comfy.service
   EOF
 
-  # Docker host apps: one shared instance shape (see instance.tf), keyed by
-  # service name, each supplying only what actually varies between apps.
   docker_apps = {
     for name, cfg in {
       juice-shop = {
