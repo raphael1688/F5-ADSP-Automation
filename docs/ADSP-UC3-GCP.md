@@ -145,7 +145,7 @@ The runtime SA referenced by `compute.gcp_runtime_service_account_email` in `con
 
 ### F5 API Security Local Edition (ASLE) Requirements
 
-The ASLE image is operator-supplied and not redistributable. To deploy:
+The ASLE image is operator-supplied and not redistributable. Login to [MyF5](https://account.f5.com/myf5) and check your entitlements to download. To deploy:
 
 1. **Build or obtain** the ASLE Docker image locally and `docker save` it to a tarball
 2. **Upload the tarball** to a GCS bucket you own. The runtime SA must have `roles/storage.objectViewer` on that bucket
