@@ -6,7 +6,7 @@ This document provides complete instructions for deploying Application Security 
 
 ## Overview
 
-Use-Case 4 deploys **NGINX Gateway Fabric (NGF)** on the Kubernetes Gateway API. NAP is not used; WAF and API protection are provided entirely by F5 Distributed Cloud at the edge.
+Use-Case 4 deploys **NGINX Gateway Fabric (NGF)** on the Kubernetes Gateway API. WAF and API protection are provided by F5 Distributed Cloud at the edge.
 
 This repository deploys a Kubernetes-based application delivery demonstration consisting of:
 
